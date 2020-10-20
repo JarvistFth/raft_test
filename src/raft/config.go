@@ -1,4 +1,4 @@
-package raft
+package test
 
 //
 // support for Raft tester.
@@ -8,7 +8,7 @@ package raft
 // test with the original before submitting.
 //
 
-import "../labrpc"
+import "../../labrpc"
 import "log"
 import "sync"
 import "testing"
@@ -19,10 +19,11 @@ import "math/big"
 import "encoding/base64"
 import "time"
 import "fmt"
+import "raft"
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
-	crand.Read(b)
+	_, _ = crand.Read(b)
 	s := base64.URLEncoding.EncodeToString(b)
 	return s[0:n]
 }
@@ -47,7 +48,7 @@ type config struct {
 	logs      []map[int]interface{} // copy of each server's committed entries
 	start     time.Time             // time at which make_config() was called
 	// begin()/end() statistics
-	t0        time.Time // time at which test_test.go called cfg.begin()
+	t0        time.Time // time at which raft_test.go called cfg.begin()
 	rpcs0     int       // rpcTotal() at start of test
 	cmds0     int       // number of agreements
 	bytes0    int64
