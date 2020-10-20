@@ -1,7 +1,7 @@
 package shardkv
 
-import "../shardmaster"
-import "../labrpc"
+import "shardmaster"
+import "labrpc"
 import "testing"
 import "os"
 

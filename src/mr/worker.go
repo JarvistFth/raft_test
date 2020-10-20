@@ -1,10 +1,60 @@
 package mr
 
-import "fmt"
+import (
+	"fmt"
+)
 import "log"
 import "net/rpc"
 import "hash/fnv"
 
+type worker struct {
+	Id             int
+	MapFunction    func(string, string) []KeyValue
+	ReduceFunction func(string, []string) string
+}
+
+func (w *worker) register() bool {
+	args := &RegisterArgs{}
+	resp := &RegisterResponse{}
+
+	ok := call("worker register -> master", args, resp)
+	if !ok {
+		log.Fatal("worker register -> master error")
+	} else {
+		w.Id = resp.WorkerID
+	}
+	return ok
+}
+
+func (w *worker) askForTask() Task {
+	args := &ReqTaskArgs{WorkerID: w.Id}
+	resp := &ReqTaskResp{}
+
+	ok := call("worker ask for task -> master", args, resp)
+	if !ok {
+		log.Fatal("worker ask for task -> master failed")
+	}
+	return *resp.Task
+}
+
+func (w *worker) doMapTask(t Task) {
+
+}
+
+func (w *worker) doReduceTask(t Task) {
+
+}
+
+func (w *worker) doingTask(t Task) {
+	switch t.Phases {
+	case MapPhase:
+		w.doMapTask(t)
+	case ReducePhase:
+		w.doReduceTask(t)
+	default:
+		panic(fmt.Sprintf("unexpected  task phase : %v", t.Phases))
+	}
+}
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,12 +74,15 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+
+	w := worker{}
+	w.MapFunction = mapf
+	w.ReduceFunction = reducef
 
 	// Your worker implementation here.
 

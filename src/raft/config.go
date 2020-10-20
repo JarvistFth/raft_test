@@ -1,4 +1,4 @@
-package test
+package raft
 
 //
 // support for Raft tester.
@@ -8,7 +8,7 @@ package test
 // test with the original before submitting.
 //
 
-import "../../labrpc"
+import "labrpc"
 import "log"
 import "sync"
 import "testing"
@@ -19,7 +19,6 @@ import "math/big"
 import "encoding/base64"
 import "time"
 import "fmt"
-import "raft"
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
