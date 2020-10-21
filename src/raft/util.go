@@ -16,7 +16,6 @@ type Log struct {
 var once sync.Once
 
 var L *Log
-var GL *Log
 
 func LogInstance() *Log {
 	once.Do(func() {
@@ -35,6 +34,19 @@ func Min(x int, y int) int {
 		return y
 	} else {
 		return x
+	}
+}
+
+func roleToString(role Role) string {
+	switch role {
+	case Follower:
+		return "Follower"
+	case Candidate:
+		return "Candidate"
+	case Leader:
+		return "Leader"
+	default:
+		return "unknown role"
 	}
 }
 

@@ -1,6 +1,4 @@
-package t
-
-import "raft"
+package raft
 
 //
 // example RequestVote RPC arguments structure.
@@ -78,44 +76,59 @@ type RequestVoteReply struct {
 
 }
 
-func (rf *raft.Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 
-
 	rf.lock()
-	defer rf.lock()
+	defer rf.unlock()
 
 
-	raft.LogInstance().Debug.Printf("server %d recv voteRequest from candidateid: %d",rf.me,args.CandidateId)
-	raft.LogInstance().Info.Printf("args.term:%d, rf.term:%d",args.Term,rf.currentTerm)
+	LogInstance().Debug.Printf("server %d recv voteRequest from candidate server: %d",rf.me,args.CandidateId)
+	LogInstance().Info.Printf("args.term:%d, rf.term:%d",args.Term,rf.currentTerm)
+	LogInstance().Info.Printf("vote for:%d, candidate:%d",rf.voteFor,args.CandidateId)
 
-	if args.Term >= rf.currentTerm{
-		rf.changeRole(raft.Follower)
-		rf.currentTerm = args.Term
-		reply.Term = rf.currentTerm
-		if rf.voteFor == -1 || rf.voteFor == args.CandidateId{
-			rf.voteFor = args.CandidateId
-			reply.VoteGranted = true
-		}else{
-			reply.VoteGranted = false
-		}
-	}else{
+	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
+		return
+	}
+
+	//shorter logs or logs aren't up to date
+	//restrict vote according to figure 5.4
+	if rf.getLastLogIndex() < args.LastLogTerm || args.LastLogTerm < rf.logs[rf.getLastLogIndex()].Term{
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+		return
+	}
+
+	if args.Term >= rf.currentTerm{
+		rf.currentTerm = args.Term
+		rf.changeRole(Follower)
+	}
+	if rf.voteFor == -1 || rf.voteFor == args.CandidateId{
+		rf.voteFor = args.CandidateId
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = true
+		LogInstance().Debug.Printf("server %d vote for server %d",rf.me,args.CandidateId)
+	}else{
+		LogInstance().Warning.Printf("server %d vote for args.CandidateId is %d",rf.me,args.CandidateId)
 	}
 	rf.resetElectionTimer()
+	LogInstance().Debug.Printf("end vote rpc handler")
 }
 
-func (rf *raft.Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	LogInstance().Info.Printf("server %d sends requestVote to server %d",rf.me,server)
 	return ok
 }
 
-func (rf *raft.Raft) startElection() {
-	raft.LogInstance().Info.Printf("server %d start election..",rf.me)
+func (rf *Raft) startElection() {
+	LogInstance().Info.Printf("server %d start election..",rf.me)
 	rf.currentTerm += 1
 	rf.voteFor = rf.me
 	rf.votesGranted = 1
+	rf.resetElectionTimer()
 
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
@@ -124,7 +137,7 @@ func (rf *raft.Raft) startElection() {
 		LastLogTerm:  rf.getLastLogTerm(),
 	}
 
-
+	
 	for i:= range rf.peers{
 		if i == rf.me{
 			continue
@@ -132,25 +145,23 @@ func (rf *raft.Raft) startElection() {
 
 		go func(peerIdx int, args *RequestVoteArgs) {
 			var reply RequestVoteReply
-			raft.LogInstance().Info.Printf("server %d sends requestVote to server %d",rf.me,peerIdx)
 			ok := rf.sendRequestVote(peerIdx,args,&reply)
 			if ok{
 				rf.lock()
-				defer rf.unlock()
-
 				if reply.Term > rf.currentTerm{
 					rf.currentTerm = reply.Term
-					rf.changeRole(raft.Follower)
-				}
-				raft.LogInstance().Debug.Printf("reply from server %d",peerIdx)
-				if reply.VoteGranted && rf.role == raft.Candidate {
-					rf.votesGranted += 1
-					if rf.votesGranted > len(rf.peers)/2{
-						rf.changeRole(raft.Leader)
+					rf.changeRole(Follower)
+				} else{
+					if reply.VoteGranted && rf.role == Candidate {
+						rf.votesGranted += 1
+						if rf.votesGranted > len(rf.peers)/2{
+							rf.changeRole(Leader)
+						}
 					}
 				}
+				rf.unlock()
 			}else{
-				raft.LogInstance().Error.Printf("votes rpc from server %d to server %d not ok",rf.me,peerIdx)
+				LogInstance().Error.Printf("votes rpc from server %d to server %d not ok",rf.me,peerIdx)
 			}
 		}(i,&args)
 	}

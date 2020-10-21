@@ -1,4 +1,4 @@
-package t
+package raft
 
 //
 // this is an outline of the API that raft must expose to
@@ -19,7 +19,6 @@ package t
 
 import (
 	"math/rand"
-	"raft"
 	"sync"
 	"time"
 )
@@ -46,6 +45,8 @@ const (
 	Leader    Role = 2
 )
 
+
+
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
@@ -64,7 +65,7 @@ type LogEntry struct {
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
-	persister *raft.Persister     // Object to hold this peer's persisted state
+	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
 
@@ -107,7 +108,7 @@ func (rf *Raft) GetState() (int, bool) {
 
 	term = rf.currentTerm
 	isleader = rf.role == Leader
-
+	LogInstance().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,roleToString(rf.role))
 	return term, isleader
 }
 
@@ -193,7 +194,7 @@ func (rf *Raft) killed() bool {
 // for any long-running work.
 //
 func Make(peers []*labrpc.ClientEnd, me int,
-	persister *raft.Persister, applyCh chan ApplyMsg) *Raft {
+	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
@@ -213,7 +214,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.matchIndex = make([]int,len(rf.peers))
 
 	rf.electionTimer = time.NewTimer(rf.getRandomDuration())
-	rf.heartBeatTimer = time.NewTimer(raft.heartBeatTimeout)
+	rf.heartBeatTimer = time.NewTimer(heartBeatTimeout)
 
 	rf.applyCh = applyCh
 
@@ -235,18 +236,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 					rf.startElection()
 				}
 				rf.unlock()
-			}
-		}
-	}(rf)
-
-	go func(rf *Raft) {
-		for{
-			select {
 			case <- rf.heartBeatTimer.C:
 				rf.lock()
 				role := rf.role
 				if role == Leader {
 					rf.broadCast()
+
 				}
 				rf.unlock()
 			}
@@ -261,16 +256,18 @@ func (rf *Raft) changeRole(role Role) {
 	rf.role = role
 	switch role {
 	case Follower:
-		raft.LogInstance().Info.Printf("server %d change to follower at term %d",rf.me,rf.currentTerm)
+		LogInstance().Info.Printf("server %d change to follower at term %d",rf.me,rf.currentTerm)
+		rf.heartBeatTimer.Stop()
 		rf.resetElectionTimer()
 		rf.voteFor = -1
 	case Candidate:
-		raft.LogInstance().Info.Printf("server %d change to Candidate at term %d",rf.me,rf.currentTerm)
+		LogInstance().Info.Printf("server %d change to Candidate at term %d",rf.me,rf.currentTerm)
 		rf.resetElectionTimer()
 		rf.startElection()
 	case Leader:
-		raft.LogInstance().Info.Printf("server %d change to Leader at term %d",rf.me,rf.currentTerm)
-		rf.resetElectionTimer()
+		LogInstance().Info.Printf("server %d change to Leader at term %d",rf.me,rf.currentTerm)
+		rf.electionTimer.Stop()
+		rf.resetHeartBeatTimer()
 		rf.broadCast()
 	}
 
@@ -285,13 +282,19 @@ func (rf *Raft) unlock() {
 }
 
 func (rf *Raft) getRandomDuration() time.Duration {
-	r := time.Duration(rand.Int63()) % raft.electionTimeout
-	return raft.electionTimeout + r
+	r := time.Duration(rand.Int63()) % electionTimeout
+	return electionTimeout + r
+	//return time.Duration(heartBeatTimeout*3+rand.Intn(heartBeatTimeout))*time.Millisecond
 }
 
 func (rf *Raft) resetElectionTimer() {
 	rf.electionTimer.Stop()
 	rf.electionTimer.Reset(rf.getRandomDuration())
+}
+
+func (rf *Raft) resetHeartBeatTimer() {
+	rf.heartBeatTimer.Stop()
+	rf.heartBeatTimer.Reset(heartBeatTimeout)
 }
 
 func (rf *Raft) getLastLogIndex() int{
