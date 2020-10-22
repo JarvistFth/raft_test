@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-type Log struct {
+type Logger struct {
 	Debug   *log.Logger
 	Info    *log.Logger
 	Warning *log.Logger
@@ -15,11 +15,11 @@ type Log struct {
 
 var once sync.Once
 
-var L *Log
+var L *Logger
 
-func LogInstance() *Log {
+func Log() *Logger {
 	once.Do(func() {
-		L = &Log{
+		L = &Logger{
 			Debug:   log.New(os.Stdout, "[DEBUG] ", log.Ldate|log.Ltime|log.Lshortfile),
 			Info:    log.New(os.Stdout, "[INFO] ", log.Ldate|log.Ltime),
 			Warning: log.New(os.Stdout, "[WARNING] ", log.Ldate|log.Ltime|log.Lshortfile),
@@ -37,7 +37,7 @@ func Min(x int, y int) int {
 	}
 }
 
-func roleToString(role Role) string {
+func (role Role) String() string {
 	switch role {
 	case Follower:
 		return "Follower"

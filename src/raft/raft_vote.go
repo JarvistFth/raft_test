@@ -83,48 +83,49 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.unlock()
 
 
-	LogInstance().Debug.Printf("server %d recv voteRequest from candidate server: %d",rf.me,args.CandidateId)
-	LogInstance().Info.Printf("args.term:%d, rf.term:%d",args.Term,rf.currentTerm)
-	LogInstance().Info.Printf("vote for:%d, candidate:%d",rf.voteFor,args.CandidateId)
+	Log().Debug.Printf("server %d recv voteRequest from candidate server: %d args.term:%d, rf.term:%d vote for:%d, candidate:%d",
+		rf.me,args.CandidateId,args.Term,rf.currentTerm,rf.voteFor,args.CandidateId)
 
+	reply.Term = rf.currentTerm
+	reply.VoteGranted = false
 	if args.Term < rf.currentTerm {
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = false
+		Log().Warning.Printf("reqvote args.Term < rf.currentTerm")
 		return
 	}
 
-	//shorter logs or logs aren't up to date
-	//restrict vote according to figure 5.4
-	if rf.getLastLogIndex() < args.LastLogTerm || args.LastLogTerm < rf.logs[rf.getLastLogIndex()].Term{
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = false
-		return
-	}
-
-	if args.Term >= rf.currentTerm{
+	if args.Term > rf.currentTerm{
+		Log().Info.Printf("reqvote args.Term >= rf.currentTerm")
 		rf.currentTerm = args.Term
 		rf.changeRole(Follower)
 	}
+
+
+	//shorter logs or logs aren't up to date
+	//restrict vote according to figure 5.4
+	mylastLogIndex := rf.getLastLogIndex()
+	mylastLogTerm := rf.logs[mylastLogIndex].Term
+	if (mylastLogTerm == args.LastLogTerm && mylastLogIndex < args.LastLogIndex) || args.LastLogTerm < mylastLogTerm{
+		Log().Warning.Printf("restrict log is up to date")
+		return
+	}
+
 	if rf.voteFor == -1 || rf.voteFor == args.CandidateId{
 		rf.voteFor = args.CandidateId
-		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
-		LogInstance().Debug.Printf("server %d vote for server %d",rf.me,args.CandidateId)
-	}else{
-		LogInstance().Warning.Printf("server %d vote for args.CandidateId is %d",rf.me,args.CandidateId)
+		rf.changeRole(Follower)
+		Log().Debug.Printf("server %d vote for server %d",rf.me,args.CandidateId)
 	}
 	rf.resetElectionTimer()
-	LogInstance().Debug.Printf("end vote rpc handler")
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	LogInstance().Info.Printf("server %d sends requestVote to server %d",rf.me,server)
+	Log().Info.Printf("server %d sends requestVote to server %d",rf.me,server)
 	return ok
 }
 
 func (rf *Raft) startElection() {
-	LogInstance().Info.Printf("server %d start election..",rf.me)
+	Log().Info.Printf("server %d start election..",rf.me)
 	rf.currentTerm += 1
 	rf.voteFor = rf.me
 	rf.votesGranted = 1
@@ -161,7 +162,7 @@ func (rf *Raft) startElection() {
 				}
 				rf.unlock()
 			}else{
-				LogInstance().Error.Printf("votes rpc from server %d to server %d not ok",rf.me,peerIdx)
+				Log().Error.Printf("votes rpc from server %d to server %d not ok",rf.me,peerIdx)
 			}
 		}(i,&args)
 	}

@@ -108,7 +108,7 @@ func (rf *Raft) GetState() (int, bool) {
 
 	term = rf.currentTerm
 	isleader = rf.role == Leader
-	LogInstance().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,roleToString(rf.role))
+	Log().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,rf.role.String())
 	return term, isleader
 }
 
@@ -256,16 +256,16 @@ func (rf *Raft) changeRole(role Role) {
 	rf.role = role
 	switch role {
 	case Follower:
-		LogInstance().Info.Printf("server %d change to follower at term %d",rf.me,rf.currentTerm)
+		Log().Info.Printf("server %d change to follower at term %d",rf.me,rf.currentTerm)
 		rf.heartBeatTimer.Stop()
 		rf.resetElectionTimer()
 		rf.voteFor = -1
 	case Candidate:
-		LogInstance().Info.Printf("server %d change to Candidate at term %d",rf.me,rf.currentTerm)
+		Log().Info.Printf("server %d change to Candidate at term %d",rf.me,rf.currentTerm)
 		rf.resetElectionTimer()
 		rf.startElection()
 	case Leader:
-		LogInstance().Info.Printf("server %d change to Leader at term %d",rf.me,rf.currentTerm)
+		Log().Info.Printf("server %d change to Leader at term %d",rf.me,rf.currentTerm)
 		rf.electionTimer.Stop()
 		rf.resetHeartBeatTimer()
 		rf.broadCast()
@@ -304,4 +304,8 @@ func (rf *Raft) getLastLogIndex() int{
 func (rf *Raft) getLastLogTerm() int {
 	back := len(rf.logs) - 1
 	return rf.logs[back].Term
+}
+
+func (rf *Raft) getTerm(idx int) int {
+	return rf.logs[idx].Term
 }
