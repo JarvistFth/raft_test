@@ -83,48 +83,54 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.unlock()
 
 
-	LogInstance().Debug.Printf("server %d recv voteRequest from candidate server: %d",rf.me,args.CandidateId)
-	LogInstance().Info.Printf("args.term:%d, rf.term:%d",args.Term,rf.currentTerm)
-	LogInstance().Info.Printf("vote for:%d, candidate:%d",rf.voteFor,args.CandidateId)
+	Log().Debug.Printf("server %d recv voteRequest from candidate server: %d, args.term:%d, rf.term:%d, vote for:%d, candidate:%d",
+		rf.me,args.CandidateId,args.Term,rf.currentTerm,rf.voteFor,args.CandidateId)
 
-	if args.Term < rf.currentTerm {
+	if args.Term < rf.currentTerm || (args.Term == rf.currentTerm && rf.voteFor != -1 && rf.voteFor != args.CandidateId) {
+		Log().Warn.Printf("local term is later, should not vote granted")
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
 	}
-
-	//shorter logs or logs aren't up to date
-	//restrict vote according to figure 5.4
-	if rf.getLastLogIndex() < args.LastLogTerm || args.LastLogTerm < rf.logs[rf.getLastLogIndex()].Term{
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = false
-		return
-	}
-
-	if args.Term >= rf.currentTerm{
+	if args.Term > rf.currentTerm{
 		rf.currentTerm = args.Term
 		rf.changeRole(Follower)
+		Log().Debug.Printf("server %d, found args.Term:%d,rf.Term:%d, change to follower",rf.me,args.Term,rf.currentTerm)
 	}
+
+	rf.resetElectionTimer()
+
+	//same log term but shorter logs
+	//or logs aren't up to date, args.last log term < rf.last log term
+	//restrict vote according to figure 5.4
+	if  (args.LastLogTerm == rf.logs[rf.getLastLogIndex()].Term && rf.getLastLogIndex() > args.LastLogIndex) || args.LastLogTerm < rf.logs[rf.getLastLogIndex()].Term{
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+		Log().Warn.Printf("server %d, log does not match. reply.term:%d,Args.LastLogTerm %d , rf.lastLogTerm:%d, args.LastLogIndex:%d, rf.lastlogIndex:%d",
+			rf.me,reply.Term, args.LastLogTerm,rf.getLastLogTerm(),args.LastLogIndex,rf.getLastLogIndex())
+		return
+	}
+
+
 	if rf.voteFor == -1 || rf.voteFor == args.CandidateId{
 		rf.voteFor = args.CandidateId
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
-		LogInstance().Debug.Printf("server %d vote for server %d",rf.me,args.CandidateId)
+		Log().Debug.Printf("server %d vote for server %d",rf.me,args.CandidateId)
 	}else{
-		LogInstance().Warning.Printf("server %d vote for args.CandidateId is %d",rf.me,args.CandidateId)
+		Log().Warn.Printf("server %d vote for args.CandidateId is %d",rf.me,args.CandidateId)
 	}
-	rf.resetElectionTimer()
-	LogInstance().Debug.Printf("end vote rpc handler")
+	//Log().Debug.Printf("end vote rpc handler")
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	LogInstance().Info.Printf("server %d sends requestVote to server %d",rf.me,server)
+	//Log().Info.Printf("server %d sends requestVote to server %d",rf.me,server)
 	return ok
 }
 
 func (rf *Raft) startElection() {
-	LogInstance().Info.Printf("server %d start election..",rf.me)
+	Log().Info.Printf("server %d start election..",rf.me)
 	rf.currentTerm += 1
 	rf.voteFor = rf.me
 	rf.votesGranted = 1
@@ -148,6 +154,7 @@ func (rf *Raft) startElection() {
 			ok := rf.sendRequestVote(peerIdx,args,&reply)
 			if ok{
 				rf.lock()
+				Log().Info.Printf(rf.getPeersLogState())
 				if reply.Term > rf.currentTerm{
 					rf.currentTerm = reply.Term
 					rf.changeRole(Follower)
@@ -161,7 +168,7 @@ func (rf *Raft) startElection() {
 				}
 				rf.unlock()
 			}else{
-				LogInstance().Error.Printf("votes rpc from server %d to server %d not ok",rf.me,peerIdx)
+				Log().Error.Printf("votes rpc from server %d to server %d not ok",rf.me,peerIdx)
 			}
 		}(i,&args)
 	}

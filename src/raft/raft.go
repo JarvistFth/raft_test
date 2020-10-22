@@ -108,7 +108,7 @@ func (rf *Raft) GetState() (int, bool) {
 
 	term = rf.currentTerm
 	isleader = rf.role == Leader
-	LogInstance().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,roleToString(rf.role))
+	Log().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,roleToString(rf.role))
 	return term, isleader
 }
 
@@ -157,6 +157,24 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
+
+	rf.lock()
+	defer rf.unlock()
+
+	term = rf.currentTerm
+	isLeader = rf.role == Leader
+
+	if isLeader{
+		rf.logs = append(rf.logs,LogEntry{
+			Term:  rf.currentTerm,
+			//Index: rf.getLastLogIndex() + 1,
+			Cmd:   command,
+		})
+		index = len(rf.logs) - 1
+		rf.matchIndex[rf.me] = index
+		rf.nextIndex[rf.me] = index + 1
+		Log().Info.Printf("get cmd from client, rf.logs.length:%d",len(rf.logs))
+	}
 
 	return index, term, isLeader
 }
@@ -209,9 +227,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 
 	rf.nextIndex = make([]int,len(rf.peers))
-
-
+	for i := range rf.nextIndex{
+		rf.nextIndex[i] = len(rf.logs)
+	}
 	rf.matchIndex = make([]int,len(rf.peers))
+	for i := range rf.matchIndex{
+		rf.matchIndex[i] = 0
+	}
+
+
 
 	rf.electionTimer = time.NewTimer(rf.getRandomDuration())
 	rf.heartBeatTimer = time.NewTimer(heartBeatTimeout)
@@ -254,18 +278,25 @@ func Make(peers []*labrpc.ClientEnd, me int,
 //need lock before using
 func (rf *Raft) changeRole(role Role) {
 	rf.role = role
+	Log().Debug.Printf(rf.getPeersLogState())
 	switch role {
 	case Follower:
-		LogInstance().Info.Printf("server %d change to follower at term %d",rf.me,rf.currentTerm)
+		Log().Info.Printf("server %d change to follower at term %d",rf.me,rf.currentTerm)
+		rf.voteFor = -1
 		rf.heartBeatTimer.Stop()
 		rf.resetElectionTimer()
-		rf.voteFor = -1
 	case Candidate:
-		LogInstance().Info.Printf("server %d change to Candidate at term %d",rf.me,rf.currentTerm)
+		Log().Info.Printf("server %d change to Candidate at term %d",rf.me,rf.currentTerm)
 		rf.resetElectionTimer()
 		rf.startElection()
 	case Leader:
-		LogInstance().Info.Printf("server %d change to Leader at term %d",rf.me,rf.currentTerm)
+		Log().Info.Printf("server %d change to Leader at term %d",rf.me,rf.currentTerm)
+		for i := range rf.nextIndex{
+			rf.nextIndex[i] = len(rf.logs)
+		}
+		for i := range rf.matchIndex{
+			rf.matchIndex[i] = 0
+		}
 		rf.electionTimer.Stop()
 		rf.resetHeartBeatTimer()
 		rf.broadCast()
@@ -304,4 +335,8 @@ func (rf *Raft) getLastLogIndex() int{
 func (rf *Raft) getLastLogTerm() int {
 	back := len(rf.logs) - 1
 	return rf.logs[back].Term
+}
+
+func (rf *Raft) getLogTerm(idx int) int {
+	return rf.logs[idx].Term
 }
