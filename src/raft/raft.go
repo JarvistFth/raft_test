@@ -55,7 +55,6 @@ type ApplyMsg struct {
 
 type LogEntry struct {
 	Term int
-	Index int
 	Cmd interface{}
 }
 
@@ -158,6 +157,21 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// Your code here (2B).
 
+	rf.lock()
+	defer rf.unlock()
+
+	term = rf.currentTerm
+	isLeader = rf.role == Leader
+	if isLeader{
+		rf.logs = append(rf.logs,LogEntry{
+			Term:  rf.currentTerm,
+			Cmd:   command,
+		})
+		index = len(rf.logs) - 1
+		rf.nextIndex[rf.me] = index + 1
+		rf.matchIndex[rf.me] = index
+	}
+
 	return index, term, isLeader
 }
 
@@ -240,8 +254,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 				rf.lock()
 				role := rf.role
 				if role == Leader {
+					rf.resetHeartBeatTimer()
 					rf.broadCast()
-
 				}
 				rf.unlock()
 			}
@@ -267,6 +281,14 @@ func (rf *Raft) changeRole(role Role) {
 	case Leader:
 		Log().Info.Printf("server %d change to Leader at term %d",rf.me,rf.currentTerm)
 		rf.electionTimer.Stop()
+		for i := range rf.nextIndex{
+			rf.nextIndex[i] = len(rf.logs)
+			Log().Info.Printf("rf.nextIndex:%d",rf.nextIndex)
+		}
+
+		for i:= range rf.matchIndex{
+			rf.matchIndex[i] = 0
+		}
 		rf.resetHeartBeatTimer()
 		rf.broadCast()
 	}
@@ -308,4 +330,35 @@ func (rf *Raft) getLastLogTerm() int {
 
 func (rf *Raft) getTerm(idx int) int {
 	return rf.logs[idx].Term
+}
+
+func (rf *Raft) tryCommit(commitIdx int) {
+	rf.commitIndex = commitIdx
+
+	if rf.commitIndex > rf.lastApplied{
+		Log().Debug.Printf("server %d try to apply from, last applied idx+1:%d, to commitidx:%d",rf.me,rf.lastApplied+1,rf.commitIndex)
+
+		entsToApply := make([]LogEntry,len(rf.logs[rf.lastApplied+1:rf.commitIndex+1]))
+		copy(entsToApply,rf.logs[rf.lastApplied+1:rf.commitIndex+1])
+
+		go func(start int,entries []LogEntry) {
+
+			for idx := range entries{
+				apMsg := ApplyMsg{
+					CommandValid: true,
+					Command:      entries[start + idx],
+					CommandIndex: start + idx,
+				}
+				rf.applyCh <- apMsg
+
+				rf.lock()
+				if apMsg.CommandIndex > rf.lastApplied{
+					rf.lastApplied = apMsg.CommandIndex
+				}
+				rf.unlock()
+			}
+
+
+		}(rf.lastApplied+1,entsToApply)
+	}
 }

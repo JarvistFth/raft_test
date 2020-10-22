@@ -53,20 +53,32 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 
 	//If an existing entry conflicts with a new one (same index
 	//but different terms), delete the existing entry and all that
-	//follow it (§5.3)
-	//now has the same previdx and logs[previdx].term, but its content may be different
-
-
+	//follow it (§5.3) Figure 7 (f)
+	//now has the same previdx and logs[previdx].term, but its term may be different
 
 
 	//Append any new entries not already in the log
 
+	oldLeaderUnCommitedIdx := -1
+
+	for i,e:=range args.Entries{
+		//i start from 0
+		if e.Term != rf.getTerm(args.PrevLogIndex+i+1) || rf.getLastLogIndex() < args.PrevLogIndex+1+i{
+			oldLeaderUnCommitedIdx = i
+		}
+	}
+
+	if oldLeaderUnCommitedIdx != -1{
+		rf.logs = rf.logs[:args.PrevLogIndex + oldLeaderUnCommitedIdx+1]
+		rf.logs = append(rf.logs,args.Entries[oldLeaderUnCommitedIdx:]...)
+	}
 
 	//If leaderCommit > commitIndex, set commitIndex =
 	//min(leaderCommit, index of last new entry)
 
-
-
+	if rf.commitIndex < args.LeaderCommitIdx{
+		rf.tryCommit(Min(args.LeaderCommitIdx,len(rf.logs)-1))
+	}
 
 }
 
@@ -88,13 +100,15 @@ func (rf *Raft) broadCast() {
 		go func(peerIdx int) {
 			reply := AppendEntriesReply{}
 			rf.lock()
-			ents := make([]LogEntry,len(rf.logs[rf.nextIndex[peerIdx]:]))
-			copy(ents,rf.logs[rf.nextIndex[peerIdx]:])
+			prevIdx := rf.nextIndex[peerIdx] -1
+			ents := make([]LogEntry,len(rf.logs[(prevIdx+1):]))
+			copy(ents,rf.logs[(prevIdx+1):])
+			Log().Info.Printf("prevIdx:%d",prevIdx)
 			args := AppendEntriesArgs{
 				Term:            rf.currentTerm,
 				LeaderId:        rf.me,
-				PrevLogIndex:    rf.nextIndex[peerIdx] - 1 ,
-				PrevLogTerm:     rf.logs[rf.nextIndex[peerIdx] - 1].Term,
+				PrevLogIndex:    prevIdx ,
+				PrevLogTerm:     rf.logs[prevIdx].Term,
 				Entries: ents,
 				LeaderCommitIdx: rf.commitIndex,
 			}
@@ -134,7 +148,7 @@ func (rf *Raft) broadCast() {
 
 				}else{
 					//reply false, decrement nextidx
-					rf.nextIndex[peerIdx] -= 1
+					rf.nextIndex[peerIdx] = args.PrevLogIndex - 1
 				}
 			}else{
 				Log().Error.Printf("server %d append entries to server %d not ok",rf.me,peerIdx)
