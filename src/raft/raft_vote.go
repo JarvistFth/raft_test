@@ -88,6 +88,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
+
 	if args.Term < rf.currentTerm {
 		Log().Warning.Printf("reqvote args.Term < rf.currentTerm")
 		return

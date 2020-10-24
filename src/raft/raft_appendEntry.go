@@ -111,14 +111,17 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 func (rf *Raft) broadCast() {
 	Log().Info.Printf("server %d start broadcast heartbeats, rf.nextidx:%d, rf.matchidx:%d",rf.me,rf.nextIndex,rf.matchIndex)
 
-
 	for i:=range rf.peers{
 		if i == rf.me{
 			continue
 		}
 		go func(peerIdx int) {
-			reply := AppendEntriesReply{}
 			rf.lock()
+			if rf.role != Leader{
+				rf.unlock()
+				return
+			}
+			reply := AppendEntriesReply{}
 			prevIdx := rf.nextIndex[peerIdx] -1
 			ents := make([]LogEntry,len(rf.logs[(prevIdx+1):]))
 			copy(ents,rf.logs[(prevIdx+1):])

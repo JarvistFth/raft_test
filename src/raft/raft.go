@@ -107,7 +107,7 @@ func (rf *Raft) GetState() (int, bool) {
 
 	term = rf.currentTerm
 	isleader = rf.role == Leader
-	//Log().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,rf.role.String())
+	Log().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,rf.role.String())
 	return term, isleader
 }
 
@@ -275,7 +275,6 @@ func (rf *Raft) changeRole(role Role) {
 		rf.voteFor = -1
 	case Candidate:
 		Log().Info.Printf("server %d change to Candidate at term %d",rf.me,rf.currentTerm)
-		rf.resetElectionTimer()
 		rf.startElection()
 	case Leader:
 		Log().Info.Printf("server %d change to Leader at term %d",rf.me,rf.currentTerm)
