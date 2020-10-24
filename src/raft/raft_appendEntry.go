@@ -39,15 +39,14 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	Log().Debug.Printf("server %d recv append entries from leader server %d",rf.me,args.LeaderId)
 
 	reply.Success = false
-	reply.Term = rf.currentTerm
 
 	if args.Term < rf.currentTerm{
 		Log().Warning.Printf("args.Term %d < rf.currentTerm %d",args.Term,rf.currentTerm)
+		reply.Term = rf.currentTerm
 		return
 	}else if args.Term > rf.currentTerm{
 		Log().Info.Printf("args.Term %d > rf.currentTerm %d",args.Term,rf.currentTerm)
 		rf.currentTerm = args.Term
-		reply.Term = rf.currentTerm
 		rf.changeRole(Follower)
 	}
 
@@ -57,11 +56,13 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	//whose term matches prevLogTerm (§5.3)
 	if rf.getLastLogIndex() < args.PrevLogIndex {
 		Log().Warning.Printf("missing log")
+		reply.Term = rf.currentTerm
 		return
 	}
 
 	if rf.getTerm(args.PrevLogIndex) != args.PrevLogTerm{
 		Log().Warning.Printf("entry at prevLogIndex whose term does not matches prevLogTerm")
+		reply.Term = rf.currentTerm
 		return
 	}
 
@@ -163,6 +164,7 @@ func (rf *Raft) broadCast() {
 					}
 
 				}else{
+					//
 					if reply.Term > rf.currentTerm{
 						rf.currentTerm = reply.Term
 						rf.changeRole(Follower)
