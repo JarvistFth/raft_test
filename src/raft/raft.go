@@ -107,7 +107,7 @@ func (rf *Raft) GetState() (int, bool) {
 
 	term = rf.currentTerm
 	isleader = rf.role == Leader
-	Log().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,rf.role.String())
+	//Log().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,rf.role.String())
 	return term, isleader
 }
 
@@ -159,7 +159,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	rf.lock()
 	defer rf.unlock()
-
 	term = rf.currentTerm
 	isLeader = rf.role == Leader
 	if isLeader{
@@ -170,8 +169,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		index = len(rf.logs) - 1
 		rf.nextIndex[rf.me] = index + 1
 		rf.matchIndex[rf.me] = index
+		Log().Info.Printf("get cmd from client, logslength:%d",len(rf.logs))
 	}
-
 	return index, term, isLeader
 }
 
@@ -283,7 +282,6 @@ func (rf *Raft) changeRole(role Role) {
 		rf.electionTimer.Stop()
 		for i := range rf.nextIndex{
 			rf.nextIndex[i] = len(rf.logs)
-			Log().Info.Printf("rf.nextIndex:%d",rf.nextIndex)
 		}
 
 		for i:= range rf.matchIndex{
@@ -336,17 +334,16 @@ func (rf *Raft) tryCommit(commitIdx int) {
 	rf.commitIndex = commitIdx
 
 	if rf.commitIndex > rf.lastApplied{
-		Log().Debug.Printf("server %d try to apply from, last applied idx+1:%d, to commitidx:%d",rf.me,rf.lastApplied+1,rf.commitIndex)
 
-		entsToApply := make([]LogEntry,len(rf.logs[rf.lastApplied+1:rf.commitIndex+1]))
-		copy(entsToApply,rf.logs[rf.lastApplied+1:rf.commitIndex+1])
+		entsToApply := append([]LogEntry{},rf.logs[(rf.lastApplied+1):(rf.commitIndex+1)]...)
+		Log().Debug.Printf("server %d try to apply from, last applied idx:%d, to commitidx:%d, entslen:%d",rf.me,rf.lastApplied,rf.commitIndex,len(entsToApply))
 
 		go func(start int,entries []LogEntry) {
 
-			for idx := range entries{
+			for idx,ent := range entries{
 				apMsg := ApplyMsg{
 					CommandValid: true,
-					Command:      entries[start + idx],
+					Command:      ent.Cmd,
 					CommandIndex: start + idx,
 				}
 				rf.applyCh <- apMsg

@@ -1,5 +1,7 @@
 package raft
 
+import "fmt"
+
 type AppendEntriesArgs struct {
 	Term int
 	LeaderId int
@@ -12,9 +14,21 @@ type AppendEntriesArgs struct {
 	LeaderCommitIdx int
 }
 
+func (args AppendEntriesArgs) String() string {
+	return fmt.Sprintf("term:%d, leaderid:%d, prevIndex:%d, prevTerm:%d, leaderCommitIdx:%d",
+		args.Term,args.LeaderId,args.PrevLogIndex,args.PrevLogTerm,args.LeaderCommitIdx)
+}
+
 type AppendEntriesReply struct {
 	Term int
 	Success bool
+}
+
+func (reply AppendEntriesReply) String() string {
+	if reply.Success{
+		return fmt.Sprintf("reply.term %d, success:%s",reply.Term,"true")
+	}
+	return fmt.Sprintf("reply.term %d, reply.success:%s",reply.Term,"false")
 }
 
 func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -60,11 +74,13 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	//Append any new entries not already in the log
 
 	oldLeaderUnCommitedIdx := -1
+	Log().Info.Printf(args.String())
 
 	for i,e:=range args.Entries{
 		//i start from 0
-		if e.Term != rf.getTerm(args.PrevLogIndex+i+1) || rf.getLastLogIndex() < args.PrevLogIndex+1+i{
+		if rf.getLastLogIndex() < args.PrevLogIndex+1+i || e.Term != rf.logs[(args.PrevLogIndex+i+1)].Term {
 			oldLeaderUnCommitedIdx = i
+			break
 		}
 	}
 
@@ -77,8 +93,10 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	//min(leaderCommit, index of last new entry)
 
 	if rf.commitIndex < args.LeaderCommitIdx{
+		Log().Info.Printf("follower commit")
 		rf.tryCommit(Min(args.LeaderCommitIdx,len(rf.logs)-1))
 	}
+	reply.Success = true
 
 }
 
@@ -90,7 +108,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 
 func (rf *Raft) broadCast() {
-	Log().Info.Printf("server %d start broadcast heartbeats",rf.me)
+	Log().Info.Printf("server %d start broadcast heartbeats, rf.nextidx:%d, rf.matchidx:%d",rf.me,rf.nextIndex,rf.matchIndex)
 
 
 	for i:=range rf.peers{
@@ -103,7 +121,6 @@ func (rf *Raft) broadCast() {
 			prevIdx := rf.nextIndex[peerIdx] -1
 			ents := make([]LogEntry,len(rf.logs[(prevIdx+1):]))
 			copy(ents,rf.logs[(prevIdx+1):])
-			Log().Info.Printf("prevIdx:%d",prevIdx)
 			args := AppendEntriesArgs{
 				Term:            rf.currentTerm,
 				LeaderId:        rf.me,
@@ -119,10 +136,7 @@ func (rf *Raft) broadCast() {
 				defer rf.unlock()
 
 
-				if reply.Term > rf.currentTerm{
-					rf.currentTerm = reply.Term
-					rf.changeRole(Follower)
-				}
+				Log().Info.Printf(reply.String())
 				//reply success
 				//update nextidx and matchidx
 				if reply.Success{
@@ -134,21 +148,31 @@ func (rf *Raft) broadCast() {
 					//set commitIndex = N
 
 					for N:=len(rf.logs)-1; N>rf.commitIndex;N--{
+						//Log().Info.Printf("N:%d, commitidx:%d",N,rf.commitIndex)
 						cnt := 0
 						for i:=range rf.matchIndex{
-							if rf.matchIndex[i] > N{
+							if rf.matchIndex[i] >= N{
 								cnt++
 							}
 							if cnt > len(rf.peers)/2{
 								//commit
+								rf.tryCommit(N)
 								break
 							}
 						}
 					}
 
 				}else{
-					//reply false, decrement nextidx
-					rf.nextIndex[peerIdx] = args.PrevLogIndex - 1
+					if reply.Term > rf.currentTerm{
+						rf.currentTerm = reply.Term
+						rf.changeRole(Follower)
+					}else{
+						//reply.term == rf.currentTerm
+						//reply false, decrement nextidx
+						Log().Info.Printf("heartbeat REPLY FALSE")
+						rf.nextIndex[peerIdx] = args.PrevLogIndex - 1
+					}
+
 				}
 			}else{
 				Log().Error.Printf("server %d append entries to server %d not ok",rf.me,peerIdx)
