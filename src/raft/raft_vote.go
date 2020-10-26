@@ -89,7 +89,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 
-	if args.Term < rf.currentTerm {
+	if args.Term < rf.currentTerm || (args.Term == rf.currentTerm && rf.voteFor != -1 && rf.voteFor != args.CandidateId){
 		Log().Warning.Printf("reqvote args.Term < rf.currentTerm")
 		return
 	}
@@ -100,12 +100,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.changeRole(Follower)
 	}
 
+	rf.resetElectionTimer()
 
 	//shorter logs or logs aren't up to date
 	//restrict vote according to figure 5.4
 	mylastLogIndex := rf.getLastLogIndex()
 	mylastLogTerm := rf.logs[mylastLogIndex].Term
-	if (mylastLogTerm == args.LastLogTerm && mylastLogIndex < args.LastLogIndex) || args.LastLogTerm < mylastLogTerm{
+	if (mylastLogTerm == args.LastLogTerm && mylastLogIndex > args.LastLogIndex) || args.LastLogTerm < mylastLogTerm{
 		Log().Warning.Printf("restrict log is up to date")
 		return
 	}
@@ -116,7 +117,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.changeRole(Follower)
 		Log().Debug.Printf("server %d vote for server %d",rf.me,args.CandidateId)
 	}
-	rf.resetElectionTimer()
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
