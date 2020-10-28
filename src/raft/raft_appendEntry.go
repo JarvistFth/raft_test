@@ -1,6 +1,9 @@
 package raft
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 type AppendEntriesArgs struct {
 	Term int
@@ -22,6 +25,9 @@ func (args AppendEntriesArgs) String() string {
 type AppendEntriesReply struct {
 	Term int
 	Success bool
+
+	ConflictIndex int
+	ConflictTerm int
 }
 
 func (reply AppendEntriesReply) String() string {
@@ -36,6 +42,7 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 
 	rf.lock()
 	defer rf.unlock()
+	defer rf.persist()
 	Log().Debug.Printf("server %d recv append entries from leader server %d",rf.me,args.LeaderId)
 
 	reply.Success = false
@@ -56,12 +63,23 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	//whose term matches prevLogTerm (§5.3)
 	if rf.getLastLogIndex() < args.PrevLogIndex {
 		Log().Warning.Printf("missing log")
+		reply.ConflictIndex = rf.getLastLogIndex() + 1
+		reply.ConflictTerm = -1
 		reply.Term = rf.currentTerm
 		return
 	}
 
 	if rf.getTerm(args.PrevLogIndex) != args.PrevLogTerm{
 		Log().Warning.Printf("entry at prevLogIndex whose term does not matches prevLogTerm")
+
+		//contain logs that leader doesn't have
+		reply.ConflictTerm = rf.getTerm(args.PrevLogIndex)
+		conflictidx := args.PrevLogIndex
+
+		for rf.getTerm(conflictidx - 1) == reply.ConflictTerm{
+			conflictidx --
+		}
+		reply.ConflictIndex = conflictidx
 		reply.Term = rf.currentTerm
 		return
 	}
@@ -75,10 +93,11 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	//Append any new entries not already in the log
 
 	oldLeaderUnCommitedIdx := -1
-	Log().Info.Printf(args.String())
+	//Log().Info.Printf(args.String())
 
 	for i,e:=range args.Entries{
 		//i start from 0
+		//append new || same index but different term
 		if rf.getLastLogIndex() < args.PrevLogIndex+1+i || e.Term != rf.logs[(args.PrevLogIndex+i+1)].Term {
 			oldLeaderUnCommitedIdx = i
 			break
@@ -94,11 +113,12 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	//min(leaderCommit, index of last new entry)
 
 	if rf.commitIndex < args.LeaderCommitIdx{
-		Log().Info.Printf("follower commit")
-		rf.tryCommit(Min(args.LeaderCommitIdx,len(rf.logs)-1))
+		Log().Debug.Printf("follower commit, rf.commit:%d, arg.leadercommit:%d",rf.commitIndex,args.LeaderCommitIdx)
+		//rf.tryCommit(Min(args.LeaderCommitIdx,len(rf.logs)-1))
+		rf.commitIndex = Min(args.LeaderCommitIdx,rf.getLastLogIndex())
 	}
 	reply.Success = true
-
+	reply.Term = rf.currentTerm
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -138,51 +158,67 @@ func (rf *Raft) broadCast() {
 			if ok{
 				rf.lock()
 				defer rf.unlock()
+				if rf.role != Leader || rf.currentTerm != args.Term{
+					return
+				}
 
-
-				Log().Info.Printf(reply.String())
+				//Log().Info.Printf(reply.String())
 				//reply success
 				//update nextidx and matchidx
 				if reply.Success{
-					rf.matchIndex[peerIdx] = args.PrevLogIndex + len(args.Entries)
-					rf.nextIndex[peerIdx] = rf.matchIndex[peerIdx] + 1
-
-					//If there exists an N such that N > commitIndex, a majority
-					//of matchIndex[i] ≥ N, and log[N].term == currentTerm:
-					//set commitIndex = N
-
-					for N:=len(rf.logs)-1; N>rf.commitIndex;N--{
-						//Log().Info.Printf("N:%d, commitidx:%d",N,rf.commitIndex)
-						cnt := 0
-						for i:=range rf.matchIndex{
-							if rf.matchIndex[i] >= N{
-								cnt++
-							}
-							if cnt > len(rf.peers)/2{
-								//commit
-								rf.tryCommit(N)
-								break
-							}
-						}
+					if rf.matchIndex[peerIdx] > args.PrevLogIndex + len(args.Entries){
+						return
 					}
 
+					if len(args.Entries) > 0{
+						rf.matchIndex[peerIdx] = args.PrevLogIndex + len(args.Entries)
+						rf.nextIndex[peerIdx] = rf.matchIndex[peerIdx] + 1
+
+						//If there exists an N such that N > commitIndex, a majority
+						//of matchIndex[i] ≥ N, and log[N].term == currentTerm:
+						//set commitIndex = N
+						rf.leaderCommitN()
+					}else{
+						Log().Info.Printf("send heartbeat reply success..")
+					}
+					return
 				}else{
-					//
 					if reply.Term > rf.currentTerm{
 						rf.currentTerm = reply.Term
 						rf.changeRole(Follower)
+						rf.persist()
+						return
 					}else{
-						//reply.term == rf.currentTerm
-						//reply false, decrement nextidx
-						Log().Info.Printf("heartbeat REPLY FALSE")
-						rf.nextIndex[peerIdx] = args.PrevLogIndex - 1
+						rf.nextIndex[peerIdx] = reply.ConflictIndex
+						if reply.ConflictTerm != -1{
+							for i:=args.PrevLogIndex; i>=1; i--{
+								if rf.getTerm(i-1) == reply.ConflictTerm{
+									rf.nextIndex[peerIdx] = i
+									break
+								}
+							}
+						}
 					}
-
 				}
 			}else{
-				Log().Error.Printf("server %d append entries to server %d not ok",rf.me,peerIdx)
+				//Log().Error.Printf("server %d append entries to server %d not ok",rf.me,peerIdx)
 			}
 		}(i)
 	}
 	rf.resetHeartBeatTimer()
+}
+
+func (rf *Raft) leaderCommitN() {
+	rf.matchIndex[rf.me] = rf.getLastLogIndex()
+
+	tmp := make([]int, len(rf.matchIndex))
+	copy(tmp,rf.matchIndex)
+	sort.Ints(tmp)
+	n := (len(rf.peers) - 1) / 2
+	N := tmp[n]
+
+	if N > rf.commitIndex && rf.logs[N].Term == rf.currentTerm{
+		rf.commitIndex = tmp[n]
+		Log().Debug.Printf("server %d commit index update to %d",rf.me,tmp[n])
+	}
 }

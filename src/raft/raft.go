@@ -111,44 +111,6 @@ func (rf *Raft) GetState() (int, bool) {
 	return term, isleader
 }
 
-//
-// save Raft's persistent state to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
-//
-func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
-}
-
-//
-// restore previously persisted state.
-//
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
-		return
-	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
-}
-
 
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
@@ -169,7 +131,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		index = len(rf.logs) - 1
 		rf.nextIndex[rf.me] = index + 1
 		rf.matchIndex[rf.me] = index
-		Log().Info.Printf("get cmd from client, logslength:%d",len(rf.logs))
+		rf.persist()
+		//Log().Info.Printf("get cmd from client, logslength:%d",len(rf.logs))
 	}
 	return index, term, isLeader
 }
@@ -217,6 +180,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.voteFor = -1
 	rf.votesGranted = 0
 	rf.role = Follower
+	rf.lastApplied = 0
 
 	rf.logs = make([]LogEntry,1)
 
@@ -260,6 +224,26 @@ func Make(peers []*labrpc.ClientEnd, me int,
 			}
 		}
 	}(rf)
+
+	go func() {
+		for !rf.killed(){
+			time.Sleep(applyTimeout)
+			rf.lock()
+			if rf.lastApplied < rf.commitIndex{
+				Log().Info.Printf("apply,index:%d",rf.lastApplied)
+				for rf.lastApplied< rf.commitIndex{
+					rf.lastApplied++
+					applyMsg := ApplyMsg{
+						CommandValid: true,
+						Command:      rf.logs[rf.lastApplied].Cmd,
+						CommandIndex: rf.lastApplied,
+					}
+					applyCh <- applyMsg
+				}
+			}
+			rf.unlock()
+		}
+	}()
 
 	return rf
 }
@@ -329,32 +313,33 @@ func (rf *Raft) getTerm(idx int) int {
 	return rf.logs[idx].Term
 }
 
-func (rf *Raft) tryCommit(commitIdx int) {
-	rf.commitIndex = commitIdx
-
-	if rf.commitIndex > rf.lastApplied{
-
-		entsToApply := append([]LogEntry{},rf.logs[(rf.lastApplied+1):(rf.commitIndex+1)]...)
-		Log().Debug.Printf("server %d try to apply from, last applied idx:%d, to commitidx:%d, entslen:%d",rf.me,rf.lastApplied,rf.commitIndex,len(entsToApply))
-
-		go func(start int,entries []LogEntry) {
-
-			for idx,ent := range entries{
-				apMsg := ApplyMsg{
-					CommandValid: true,
-					Command:      ent.Cmd,
-					CommandIndex: start + idx,
-				}
-				rf.applyCh <- apMsg
-
-				rf.lock()
-				if apMsg.CommandIndex > rf.lastApplied{
-					rf.lastApplied = apMsg.CommandIndex
-				}
-				rf.unlock()
-			}
-
-
-		}(rf.lastApplied+1,entsToApply)
-	}
-}
+//func (rf *Raft) tryCommit(commitIdx int) {
+//	rf.commitIndex = commitIdx
+//
+//	if rf.commitIndex > rf.lastApplied{
+//
+//		entsToApply := append([]LogEntry{},rf.logs[(rf.lastApplied+1):(rf.commitIndex+1)]...)
+//		Log().Debug.Printf("server %d try to apply from, last applied idx:%d, to commitidx:%d, entslen:%d",rf.me,rf.lastApplied,rf.commitIndex,len(entsToApply))
+//
+//		go func(start int,entries []LogEntry) {
+//
+//			for idx,ent := range entries{
+//
+//				apMsg := ApplyMsg{
+//					CommandValid: true,
+//					Command:      ent.Cmd,
+//					CommandIndex: start + idx,
+//				}
+//				rf.applyCh <- apMsg
+//
+//				rf.lock()
+//				if apMsg.CommandIndex > rf.lastApplied{
+//					rf.lastApplied = apMsg.CommandIndex
+//				}
+//				rf.unlock()
+//			}
+//
+//
+//		}(rf.lastApplied+1,entsToApply)
+//	}
+//}

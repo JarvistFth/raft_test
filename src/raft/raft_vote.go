@@ -81,6 +81,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	rf.lock()
 	defer rf.unlock()
+	defer rf.persist()
 
 
 	Log().Debug.Printf("server %d recv voteRequest from candidate server: %d args.term:%d, rf.term:%d vote for:%d, candidate:%d",
@@ -100,13 +101,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.changeRole(Follower)
 	}
 
-	rf.resetElectionTimer()
 
 	//shorter logs or logs aren't up to date
 	//restrict vote according to figure 5.4
 	mylastLogIndex := rf.getLastLogIndex()
 	mylastLogTerm := rf.logs[mylastLogIndex].Term
-	if (mylastLogTerm == args.LastLogTerm && mylastLogIndex > args.LastLogIndex) || args.LastLogTerm < mylastLogTerm{
+	if args.LastLogTerm < mylastLogTerm || (mylastLogTerm == args.LastLogTerm && mylastLogIndex > args.LastLogIndex) {
 		Log().Warning.Printf("restrict log is up to date")
 		return
 	}
@@ -117,16 +117,18 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.changeRole(Follower)
 		Log().Debug.Printf("server %d vote for server %d",rf.me,args.CandidateId)
 	}
+	rf.resetElectionTimer()
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	Log().Info.Printf("server %d sends requestVote to server %d",rf.me,server)
+	//Log().Info.Printf("server %d sends requestVote to server %d",rf.me,server)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
 
 func (rf *Raft) startElection() {
 	Log().Info.Printf("server %d start election..",rf.me)
+	defer rf.persist()
 	rf.currentTerm += 1
 	rf.voteFor = rf.me
 	rf.votesGranted = 1
@@ -150,20 +152,21 @@ func (rf *Raft) startElection() {
 			ok := rf.sendRequestVote(peerIdx,args,&reply)
 			if ok{
 				rf.lock()
-				if reply.Term > rf.currentTerm{
-					rf.currentTerm = reply.Term
-					rf.changeRole(Follower)
-				} else{
-					if reply.VoteGranted && rf.role == Candidate {
-						rf.votesGranted += 1
-						if rf.votesGranted > len(rf.peers)/2{
-							rf.changeRole(Leader)
-						}
+				if reply.VoteGranted && rf.role == Candidate {
+					rf.votesGranted += 1
+					if rf.votesGranted > len(rf.peers)/2{
+						rf.changeRole(Leader)
+					}
+				}else{
+					if reply.Term > rf.currentTerm{
+						rf.currentTerm = reply.Term
+						rf.persist()
+						rf.changeRole(Follower)
 					}
 				}
 				rf.unlock()
 			}else{
-				Log().Error.Printf("votes rpc from server %d to server %d not ok",rf.me,peerIdx)
+				//Log().Error.Printf("votes rpc from server %d to server %d not ok",rf.me,peerIdx)
 			}
 		}(i,&args)
 	}
