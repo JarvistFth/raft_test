@@ -127,85 +127,70 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
-
+//lock before using
 func (rf *Raft) broadCast() {
 	Log().Info.Printf("server %d start broadcast heartbeats, rf.nextidx:%d, rf.matchidx:%d",rf.me,rf.nextIndex,rf.matchIndex)
 
-	for i:=range rf.peers{
-		if i == rf.me{
+	args := AppendEntriesArgs{
+		Term:            rf.currentTerm,
+		LeaderId:        rf.me,
+		PrevLogIndex:    0,
+		PrevLogTerm:     0,
+		Entries:         nil,
+		LeaderCommitIdx: rf.commitIndex,
+	}
+
+	for i:=range rf.peers {
+		if i == rf.me {
 			continue
 		}
-		go func(peerIdx int) {
-			rf.lock()
-			if rf.role != Leader{
-				rf.unlock()
-				return
-			}
-			reply := AppendEntriesReply{}
-			prevIdx := rf.nextIndex[peerIdx] -1
-			ents := make([]LogEntry,len(rf.logs[(prevIdx+1):]))
-			copy(ents,rf.logs[(prevIdx+1):])
-			args := AppendEntriesArgs{
-				Term:            rf.currentTerm,
-				LeaderId:        rf.me,
-				PrevLogIndex:    prevIdx ,
-				PrevLogTerm:     rf.logs[prevIdx].Term,
-				Entries: ents,
-				LeaderCommitIdx: rf.commitIndex,
-			}
-			rf.unlock()
-			ok := rf.sendAppendEntries(peerIdx,&args,&reply)
-			if ok{
-				rf.lock()
-				defer rf.unlock()
-				if rf.role != Leader || rf.currentTerm != args.Term{
-					return
-				}
-
-				//Log().Info.Printf(reply.String())
-				//reply success
-				//update nextidx and matchidx
-				if reply.Success{
-					if rf.matchIndex[peerIdx] > args.PrevLogIndex + len(args.Entries){
-						return
-					}
-
-					if len(args.Entries) > 0{
-						rf.matchIndex[peerIdx] = args.PrevLogIndex + len(args.Entries)
-						rf.nextIndex[peerIdx] = rf.matchIndex[peerIdx] + 1
-
-						//If there exists an N such that N > commitIndex, a majority
-						//of matchIndex[i] ≥ N, and log[N].term == currentTerm:
-						//set commitIndex = N
-						rf.leaderCommitN()
-					}else{
-						Log().Info.Printf("send heartbeat reply success..")
-					}
-					return
-				}else{
-					if reply.Term > rf.currentTerm{
-						rf.currentTerm = reply.Term
-						rf.changeRole(Follower)
-						rf.persist()
-						return
-					}else{
-						rf.nextIndex[peerIdx] = reply.ConflictIndex
-						if reply.ConflictTerm != -1{
-							for i:=args.PrevLogIndex; i>=1; i--{
-								if rf.getTerm(i-1) == reply.ConflictTerm{
-									rf.nextIndex[peerIdx] = i
-									break
-								}
-							}
-						}
-					}
-				}
-			}else{
-				//Log().Error.Printf("server %d append entries to server %d not ok",rf.me,peerIdx)
-			}
-		}(i)
+		go rf.sendAppendEntriesRPC(i,&args)
 	}
 	rf.resetHeartBeatTimer()
+}
+
+func (rf *Raft) sendAppendEntriesRPC(peerIdx int, args *AppendEntriesArgs) {
+	reply := AppendEntriesReply{}
+
+	rf.lock()
+
+	if rf.role != Leader{
+		return
+	}
+
+	prevLogIndex := rf.nextIndex[peerIdx] - 1
+	args.PrevLogIndex = prevLogIndex
+	args.PrevLogTerm = rf.getTerm(prevLogIndex)
+	args.Entries = make([]LogEntry,len(rf.logs[prevLogIndex+1:]))
+	copy(args.Entries,rf.logs[prevLogIndex+1:])
+	rf.unlock()
+
+	ok := rf.peers[peerIdx].Call("Raft.AppendEntries",&args,&reply)
+	if ok{
+		rf.lock()
+		defer rf.unlock()
+		if rf.role != Leader{
+			return
+		}
+
+		if reply.Success{
+
+		}else{
+			if reply.Term > args.Term{
+				rf.currentTerm = reply.Term
+				rf.changeRole(Follower)
+				return
+			}else{
+
+			}
+		}
+
+	}else{
+		//fail
+	}
+
+
+
 }
 
 func (rf *Raft) leaderCommitN() {
