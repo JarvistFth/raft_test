@@ -17,13 +17,12 @@ def run_one_test(test_name: str, i: int, log_path: str, time_limit: str):
         print(f'test {i} passed')
     else:
         print(f'test {i} failed')
-        with open(f"{log_path}/logs/debug_{i}.txt", 'w') as f:
+        with open(f"{log_path}/logs/debug_{i}_{test_name}.txt", 'w') as f:
             f.write(output)
 
 
 if __name__ == '__main__':
     import argparse
-    # os.system("export GOPATH=$GOPATH:$PWD/../../")
     os.environ["GOPATH"] += os.pathsep + '/home/jarvist/6.824'
     print(os.environ["GOPATH"])
     parser = argparse.ArgumentParser(description="process core num and test time")

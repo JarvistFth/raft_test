@@ -18,7 +18,6 @@ package raft
 //
 
 import (
-	"math/rand"
 	"sync"
 	"time"
 )
@@ -76,6 +75,7 @@ type Raft struct {
 
 	logs    []LogEntry
 	applyCh chan ApplyMsg
+	startApply chan int
 
 	commitIndex int
 	lastApplied int
@@ -85,6 +85,7 @@ type Raft struct {
 
 	electionTimer *time.Timer
 	heartBeatTimer *time.Timer
+	applyTimer *time.Timer
 
 
 
@@ -112,6 +113,28 @@ func (rf *Raft) GetState() (int, bool) {
 }
 
 
+//
+// the tester doesn't halt goroutines created by Raft after each test,
+// but it does call the Kill() method. your code can use killed() to
+// check whether Kill() has been called. the use of atomic avoids the
+// need for a lock.
+//
+// the issue is that long-running goroutines use memory and may chew
+// up CPU time, perhaps causing later tests to fail and generating
+// confusing debug output. any goroutine with a long-running loop
+// should call killed() to check whether it should stop.
+//
+func (rf *Raft) Kill() {
+	atomic.StoreInt32(&rf.dead, 1)
+	// Your code here, if desired.
+}
+
+func (rf *Raft) killed() bool {
+	z := atomic.LoadInt32(&rf.dead)
+	return z == 1
+}
+
+
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
 	term := -1
@@ -135,27 +158,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		//Log().Info.Printf("get cmd from client, logslength:%d",len(rf.logs))
 	}
 	return index, term, isLeader
-}
-
-//
-// the tester doesn't halt goroutines created by Raft after each test,
-// but it does call the Kill() method. your code can use killed() to
-// check whether Kill() has been called. the use of atomic avoids the
-// need for a lock.
-//
-// the issue is that long-running goroutines use memory and may chew
-// up CPU time, perhaps causing later tests to fail and generating
-// confusing debug output. any goroutine with a long-running loop
-// should call killed() to check whether it should stop.
-//
-func (rf *Raft) Kill() {
-	atomic.StoreInt32(&rf.dead, 1)
-	// Your code here, if desired.
-}
-
-func (rf *Raft) killed() bool {
-	z := atomic.LoadInt32(&rf.dead)
-	return z == 1
 }
 
 //
@@ -192,8 +194,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.electionTimer = time.NewTimer(rf.getRandomDuration())
 	rf.heartBeatTimer = time.NewTimer(heartBeatTimeout)
+	rf.applyTimer = time.NewTimer(applyTimeout)
 
 	rf.applyCh = applyCh
+	rf.startApply = make(chan int)
 
 	// Your initialization code here (2A, 2B, 2C).
 
@@ -213,10 +217,17 @@ func Make(peers []*labrpc.ClientEnd, me int,
 					rf.startElection()
 				}
 				rf.unlock()
+			}
+		}
+	}(rf)
+
+	go func(rf *Raft) {
+		for  {
+			select {
 			case <- rf.heartBeatTimer.C:
 				rf.lock()
 				role := rf.role
-				if role == Leader {
+				if role == Leader{
 					rf.resetHeartBeatTimer()
 					rf.broadCast()
 				}
@@ -225,25 +236,33 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		}
 	}(rf)
 
-	go func() {
-		for !rf.killed(){
-			time.Sleep(applyTimeout)
-			rf.lock()
-			if rf.lastApplied < rf.commitIndex{
-				Log().Info.Printf("apply,index:%d",rf.lastApplied)
-				for rf.lastApplied< rf.commitIndex{
-					rf.lastApplied++
-					applyMsg := ApplyMsg{
-						CommandValid: true,
-						Command:      rf.logs[rf.lastApplied].Cmd,
-						CommandIndex: rf.lastApplied,
-					}
-					applyCh <- applyMsg
-				}
-			}
-			rf.unlock()
-		}
-	}()
+	//go func(rf *Raft) {
+	//	for !rf.killed(){
+	//		select {
+	//		//case <- rf.applyTimer.C:
+	//			case <- rf.startApply:
+	//			rf.lock()
+	//			var applyMsgs []ApplyMsg
+	//			if rf.lastApplied < rf.commitIndex{
+	//				Log().Info.Printf("server %d, apply index:%d",rf.me,rf.lastApplied)
+	//				for rf.lastApplied< rf.commitIndex{
+	//					rf.lastApplied++
+	//					applyMsg := ApplyMsg{
+	//						CommandValid: true,
+	//						Command:      rf.logs[rf.lastApplied].Cmd,
+	//						CommandIndex: rf.lastApplied,
+	//					}
+	//					applyMsgs = append(applyMsgs,applyMsg)
+	//				}
+	//			}
+	//			rf.unlock()
+	//			for _, msg := range applyMsgs{
+	//				applyCh <- msg
+	//			}
+	//			//rf.applyTimer.Reset(applyTimeout)
+	//		}
+	//	}
+	//}(rf)
 
 	return rf
 }
@@ -255,7 +274,7 @@ func (rf *Raft) changeRole(role Role) {
 	case Follower:
 		Log().Info.Printf("server %d change to follower at term %d",rf.me,rf.currentTerm)
 		rf.heartBeatTimer.Stop()
-		rf.resetElectionTimer()
+		//rf.resetElectionTimer()
 		rf.voteFor = -1
 	case Candidate:
 		Log().Info.Printf("server %d change to Candidate at term %d",rf.me,rf.currentTerm)
@@ -273,73 +292,4 @@ func (rf *Raft) changeRole(role Role) {
 		rf.resetHeartBeatTimer()
 		rf.broadCast()
 	}
-
 }
-
-func (rf*Raft) lock() {
-	rf.mu.Lock()
-}
-
-func (rf *Raft) unlock() {
-	rf.mu.Unlock()
-}
-
-func (rf *Raft) getRandomDuration() time.Duration {
-	r := time.Duration(rand.Int63()) % electionTimeout
-	return electionTimeout + r
-	//return time.Duration(heartBeatTimeout*3+rand.Intn(heartBeatTimeout))*time.Millisecond
-}
-
-func (rf *Raft) resetElectionTimer() {
-	rf.electionTimer.Stop()
-	rf.electionTimer.Reset(rf.getRandomDuration())
-}
-
-func (rf *Raft) resetHeartBeatTimer() {
-	rf.heartBeatTimer.Stop()
-	rf.heartBeatTimer.Reset(heartBeatTimeout)
-}
-
-func (rf *Raft) getLastLogIndex() int{
-	return len(rf.logs) - 1
-}
-
-func (rf *Raft) getLastLogTerm() int {
-	back := len(rf.logs) - 1
-	return rf.logs[back].Term
-}
-
-func (rf *Raft) getTerm(idx int) int {
-	return rf.logs[idx].Term
-}
-
-//func (rf *Raft) tryCommit(commitIdx int) {
-//	rf.commitIndex = commitIdx
-//
-//	if rf.commitIndex > rf.lastApplied{
-//
-//		entsToApply := append([]LogEntry{},rf.logs[(rf.lastApplied+1):(rf.commitIndex+1)]...)
-//		Log().Debug.Printf("server %d try to apply from, last applied idx:%d, to commitidx:%d, entslen:%d",rf.me,rf.lastApplied,rf.commitIndex,len(entsToApply))
-//
-//		go func(start int,entries []LogEntry) {
-//
-//			for idx,ent := range entries{
-//
-//				apMsg := ApplyMsg{
-//					CommandValid: true,
-//					Command:      ent.Cmd,
-//					CommandIndex: start + idx,
-//				}
-//				rf.applyCh <- apMsg
-//
-//				rf.lock()
-//				if apMsg.CommandIndex > rf.lastApplied{
-//					rf.lastApplied = apMsg.CommandIndex
-//				}
-//				rf.unlock()
-//			}
-//
-//
-//		}(rf.lastApplied+1,entsToApply)
-//	}
-//}
