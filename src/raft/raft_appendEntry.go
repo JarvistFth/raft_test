@@ -45,6 +45,10 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	defer rf.persist()
 	Log().Debug.Printf("server %d recv append entries from leader server %d",rf.me,args.LeaderId)
 
+	if args.Term == rf.currentTerm{
+		rf.resetElectionTimer()
+	}
+
 	if args.Term > rf.currentTerm{
 		Log().Info.Printf("args.Term %d > rf.currentTerm %d",args.Term,rf.currentTerm)
 		rf.currentTerm = args.Term
@@ -61,7 +65,7 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 		return
 	}
 
-	defer rf.resetElectionTimer()
+	//defer rf.resetElectionTimer()
 
 	//Reply false if log doesn’t contain an entry at prevLogIndex
 	//whose term matches prevLogTerm (§5.3)
@@ -123,7 +127,6 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 
 	if rf.commitIndex < args.LeaderCommitIdx{
 		Log().Debug.Printf("follower commit, rf.commit:%d, arg.leadercommit:%d",rf.commitIndex,args.LeaderCommitIdx)
-		//rf.tryCommit(Min(args.LeaderCommitIdx,len(rf.logs)-1))
 		rf.commitIndex = Min(args.LeaderCommitIdx,rf.getLastLogIndex())
 		//rf.startApply <- 1
 		rf.updateLastApplied()
@@ -178,10 +181,18 @@ func (rf *Raft) sendAppendEntriesRPC(peerIdx int) {
 
 		rf.lock()
 		defer rf.unlock()
+
+		//From experience, we have found that by far the simplest thing to do is to first record the term in the reply
+		//(it may be higher than your current term), and then to compare the current term with the term you sent in your original RPC.
+		//If the two are different, drop the reply and return.
+		//Only if the two terms are the same should you continue processing the reply.
+
 		if rf.role != Leader || rf.currentTerm != args.Term{
 			return
 		}
 
+		//If RPC request or response contains term T > currentTerm:
+		//set currentTerm = T, convert to follower (§5.1)
 		if reply.Term > args.Term{
 			rf.currentTerm = reply.Term
 			rf.changeRole(Follower)
@@ -222,6 +233,7 @@ func (rf *Raft) sendAppendEntriesRPC(peerIdx int) {
 
 }
 
+//lock before calling
 func (rf *Raft) updateCommitIdx() {
 	rf.matchIndex[rf.me] = rf.getLastLogIndex()
 	//If there exists an N such that N > commitIndex, a majority
@@ -242,16 +254,21 @@ func (rf *Raft) updateCommitIdx() {
 	}
 }
 
+//lock before calling
 func (rf *Raft) updateLastApplied() {
-	for rf.lastApplied < rf.commitIndex {
-		rf.lastApplied++
-		curLog := rf.logs[rf.lastApplied]
-		applyMsg := ApplyMsg{
-			true,
-			curLog.Cmd,
-			rf.lastApplied,
+
+	go func() {
+		for rf.lastApplied < rf.commitIndex {
+			rf.lastApplied++
+			curLog := rf.logs[rf.lastApplied]
+			applyMsg := ApplyMsg{
+				true,
+				curLog.Cmd,
+				rf.lastApplied,
+			}
+			rf.applyCh <- applyMsg
 		}
-		rf.applyCh <- applyMsg
-	}
+	}()
+
 }
 

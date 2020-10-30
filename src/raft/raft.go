@@ -90,6 +90,7 @@ type Raft struct {
 
 
 
+
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -199,6 +200,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyCh = applyCh
 	rf.startApply = make(chan int)
 
+
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
@@ -213,28 +215,38 @@ func Make(peers []*labrpc.ClientEnd, me int,
 				switch role {
 				case Follower:
 					rf.changeRole(Candidate)
+					rf.unlock()
 				case Candidate:
 					rf.startElection()
+					rf.unlock()
 				}
-				rf.unlock()
-			}
-		}
-	}(rf)
 
-	go func(rf *Raft) {
-		for  {
-			select {
 			case <- rf.heartBeatTimer.C:
 				rf.lock()
 				role := rf.role
+				rf.unlock()
 				if role == Leader{
 					rf.resetHeartBeatTimer()
 					rf.broadCast()
 				}
-				rf.unlock()
 			}
 		}
 	}(rf)
+
+	//go func(rf *Raft) {
+	//	for  {
+	//		select {
+	//		case <- rf.heartBeatTimer.C:
+	//			rf.lock()
+	//			role := rf.role
+	//			if role == Leader{
+	//				rf.resetHeartBeatTimer()
+	//				rf.broadCast()
+	//			}
+	//			rf.unlock()
+	//		}
+	//	}
+	//}(rf)
 
 	//go func(rf *Raft) {
 	//	for !rf.killed(){
@@ -274,22 +286,31 @@ func (rf *Raft) changeRole(role Role) {
 	case Follower:
 		Log().Info.Printf("server %d change to follower at term %d",rf.me,rf.currentTerm)
 		rf.heartBeatTimer.Stop()
-		//rf.resetElectionTimer()
+		//每次changeToFollower后都要重启选举定时器，被这个坑了好久TAT..
+		rf.resetElectionTimer()
+		//reset vote for
 		rf.voteFor = -1
 	case Candidate:
 		Log().Info.Printf("server %d change to Candidate at term %d",rf.me,rf.currentTerm)
+		//change to candidate, just start election
 		rf.startElection()
 	case Leader:
 		Log().Info.Printf("server %d change to Leader at term %d",rf.me,rf.currentTerm)
+		//change to leader, stop electionTimer
 		rf.electionTimer.Stop()
+
+		//reset next index to my local last log index + 1
 		for i := range rf.nextIndex{
 			rf.nextIndex[i] = len(rf.logs)
 		}
 
+		//match index should reset to 0
 		for i:= range rf.matchIndex{
 			rf.matchIndex[i] = 0
 		}
+		//reset heartbeat,
 		rf.resetHeartBeatTimer()
+		//start broadcast
 		rf.broadCast()
 	}
 }

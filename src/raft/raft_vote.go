@@ -240,9 +240,6 @@ func (rf *Raft) checkUpToDate(localLastLogTerm, remoteLastLogTerm, localLastInde
 		return false
 	}
 
-	//if localLastLogTerm == remoteLastLogTerm && localLastIndex > remoteLastIndex{
-	//	return false
-	//}
 	return true
 
 
