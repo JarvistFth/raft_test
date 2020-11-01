@@ -81,17 +81,19 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	rf.lock()
 	defer rf.unlock()
-	defer rf.persist()
 
+	//Log().Debug.Printf("server %d recv voteRequest from candidate server: %d args.term:%d, rf.term:%d vote for:%d, candidate:%d",
+	//	rf.me,args.CandidateId,args.Term,rf.currentTerm,rf.voteFor,args.CandidateId)
 
-	Log().Debug.Printf("server %d recv voteRequest from candidate server: %d args.term:%d, rf.term:%d vote for:%d, candidate:%d",
-		rf.me,args.CandidateId,args.Term,rf.currentTerm,rf.voteFor,args.CandidateId)
-
+	//If RPC request or response contains term T > currentTerm:
+	//set currentTerm = T, convert to follower (§5.1)
+	//For example, if you have already voted in the current term,
+	//and an incoming RequestVote RPC has a higher term that you,
+	//you should first step down and adopt their term (thereby resetting votedFor),
+	//and then handle the RPC, which will result in you granting the vote!
 	if args.Term > rf.currentTerm{
-		Log().Info.Printf("s%d, reqvote args.Term > rf.currentTerm",rf.me)
-		rf.currentTerm = args.Term
-		reply.Term = rf.currentTerm
-		rf.changeRole(Follower)
+		//Log().Info.Printf("s%d, reqvote args.Term > rf.currentTerm",rf.me)
+		rf.changeToFollower(args.Term)
 	}
 
 	reply.Term = rf.currentTerm
@@ -99,53 +101,33 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 
 	//Reply false if term < currentTerm (§5.1)
-	if args.Term < rf.currentTerm || (args.Term == rf.currentTerm && rf.voteFor != -1 && rf.voteFor != args.CandidateId){
-		Log().Warning.Printf("reqvote args.Term < rf.currentTerm")
+	if args.Term < rf.currentTerm || ( rf.voteFor != -1 && rf.voteFor != args.CandidateId){
+		//Log().Warning.Printf("reqvote args.Term < rf.currentTerm")
 		return
 	}
-	//If RPC request or response contains term T > currentTerm:
-	//set currentTerm = T, convert to follower (§5.1)
-
-	//For example, if you have already voted in the current term,
-	//and an incoming RequestVote RPC has a higher term that you,
-	//you should first step down and adopt their term (thereby resetting votedFor),
-	//and then handle the RPC, which will result in you granting the vote!
-
 
 
 	//shorter logs or logs aren't up to date
 	//restrict vote according to figure 5.4
 	// If votedFor is null or candidateId, and candidate’s log is at
 	// least as up-to-date as receiver’s log, grant vote (§5.2, §5.4)
+	if args.LastLogTerm < rf.getLastLogTerm() || (args.LastLogTerm == rf.getLastLogTerm() && args.LastLogIndex < rf.getLastLogIndex()){
+		//Log().Warning.Printf("restrict log is up to date")
+		return
+	}
 
-		//mylastLogIndex := rf.getLastLogIndex()
-		//mylastLogTerm := rf.logs[mylastLogIndex].Term
+	rf.voteFor = args.CandidateId
+	reply.VoteGranted = true
+	rf.role = Follower
+	rf.persist()
+	//you should only restart your election timer
+	//if a) you get an AppendEntries RPC from the current leader (i.e., if the term in the AppendEntries arguments is outdated,
+	//you should not reset your timer);
+	//b) you are starting an election; or
+	//c) you grant a vote to another peer.
+	rf.sendCh(rf.voteCh)
+	//Log().Debug.Printf("server %d vote for server %d",rf.me,args.CandidateId)
 
-		//if !rf.checkUpToDate(mylastLogTerm,args.LastLogTerm,mylastLogIndex,args.LastLogIndex){
-		//		Log().Warning.Printf("s%d restrict log is up to date, localLastTerm:%d, argsLastterm:%d, localLastidx:%d, argsLastIdx:%d",
-		//			rf.me,mylastLogTerm,args.LastLogTerm,mylastLogIndex,args.LastLogIndex)
-		//		return
-		//}
-
-		lastLogIndex := len(rf.logs) - 1
-		if args.LastLogTerm < rf.logs[lastLogIndex].Term ||
-			(args.LastLogTerm == rf.logs[lastLogIndex].Term && args.LastLogIndex < lastLogIndex) {
-				// Receiver is more up-to-date, does not grant vote
-			Log().Warning.Printf("s%d restrict log is up to date, localLastTerm:%d, argsLastterm:%d, localLastidx:%d, argsLastIdx:%d",
-				rf.me,rf.logs[lastLogIndex].Term,args.LastLogTerm,lastLogIndex,args.LastLogIndex)
-			return
-			}
-
-
-		rf.voteFor = args.CandidateId
-		reply.VoteGranted = true
-		Log().Debug.Printf("server %d vote for server %d",rf.me,args.CandidateId)
-		//you should only restart your election timer
-		//if a) you get an AppendEntries RPC from the current leader (i.e., if the term in the AppendEntries arguments is outdated,
-		//you should not reset your timer);
-		//b) you are starting an election; or
-		//c) you grant a vote to another peer.
-		rf.resetElectionTimer()
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
@@ -155,26 +137,17 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) startElection() {
-	Log().Info.Printf("server %d start election..",rf.me)
-	defer rf.persist()
+	//Log().Info.Printf("server %d start election..",rf.me)
+	//defer rf.persist()
 
-	//On conversion to candidate, start election:
-	//• Increment currentTerm
-	//• Vote for self
-	//• Reset election timer
-	//• Send RequestVote RPCs to all other servers
-
-	rf.currentTerm += 1
-	rf.voteFor = rf.me
-	rf.votesGranted = 1
-	rf.resetElectionTimer()
-
+	rf.lock()
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateId:  rf.me,
 		LastLogIndex: rf.getLastLogIndex(),
 		LastLogTerm:  rf.getLastLogTerm(),
 	}
+	rf.unlock()
 
 	
 	for i:= range rf.peers{
@@ -188,6 +161,7 @@ func (rf *Raft) startElection() {
 			if ok{
 				rf.lock()
 				defer rf.unlock()
+
 				//From experience, we have found that by far the simplest thing to do is to first record the term in the reply
 				//(it may be higher than your current term), and then to compare the current term with the term you sent in your original RPC.
 				//If the two are different, drop the reply and return.
@@ -199,9 +173,7 @@ func (rf *Raft) startElection() {
 				//If RPC request or response contains term T > currentTerm:
 				//set currentTerm = T, convert to follower (§5.1)
 				if reply.Term > rf.currentTerm{
-					rf.currentTerm = reply.Term
-					rf.changeRole(Follower)
-					rf.persist()
+					rf.changeToFollower(reply.Term)
 					return
 				}
 
@@ -209,38 +181,11 @@ func (rf *Raft) startElection() {
 				if reply.VoteGranted {
 					rf.votesGranted += 1
 					if rf.votesGranted > len(rf.peers)/2{
-						rf.changeRole(Leader)
+						rf.changeToLeader()
+						rf.sendCh(rf.voteCh)
 					}
 				}
 			}
 		}(i,&args)
 	}
-
-}
-
-func (rf *Raft) checkUpToDate(localLastLogTerm, remoteLastLogTerm, localLastIndex, remoteLastIndex int) bool {
-	//Raft determines which of two logs is more up-to-date
-	//by comparing the index and term of the last entries in the
-	//logs. If the logs have last entries with different terms, then
-	//the log with the later term is more up-to-date. If the logs
-	//end with the same term, then whichever log is longer is
-	//more up-to-date.
-
-	//	lastLogIndex := len(rf.logs) - 1
-	//	if args.LastLogTerm < rf.logs[lastLogIndex].Term ||
-	//		(args.LastLogTerm == rf.logs[lastLogIndex].Term &&
-	//			args.LastLogIndex < rf.getAbsoluteLogIndex(lastLogIndex)) {
-	//		// Receiver is more up-to-date, does not grant vote
-	//		reply.Term = rf.currentTerm
-	//		reply.VoteGranted = false
-	//		return
-	//	}
-
-	if localLastLogTerm > remoteLastLogTerm || localLastLogTerm == remoteLastLogTerm && localLastIndex > remoteLastIndex{
-		return false
-	}
-
-	return true
-
-
 }

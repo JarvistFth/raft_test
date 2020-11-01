@@ -20,8 +20,8 @@ def run_one_test(test_name: str, i: int, log_path: str, time_limit: str, total: 
     if result == 'ok':
         cnt.value += 1
         print(f'test {i} passed, total passed: {cnt.value}/{total}')
-        with open(f"{log_path}/logs/debug_{i}_{test_name}_passed.txt", 'w') as f:
-            f.write(output)
+        # with open(f"{log_path}/logs/debug_{i}_{test_name}_passed.txt", 'w') as f:
+        #     f.write(output)
     else:
         print(f'test {i} failed')
         with open(f"{log_path}/logs/debug_{i}_{test_name}_failed.txt", 'w') as f:

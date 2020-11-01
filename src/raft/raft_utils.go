@@ -27,17 +27,26 @@ func (rf *Raft) getRandomDuration() time.Duration {
 	//return time.Duration(heartBeatTimeout*3+rand.Intn(heartBeatTimeout))*time.Millisecond
 }
 
+func (rf *Raft) sendCh(ch chan struct{}) {
+	select {
+	case <-ch:
+		//break
+	default:
+	}
+	ch <- struct{}{}
+}
+
 
 //reset timers
-func (rf *Raft) resetElectionTimer() {
-	rf.electionTimer.Stop()
-	rf.electionTimer.Reset(rf.getRandomDuration())
-}
-
-func (rf *Raft) resetHeartBeatTimer() {
-	rf.heartBeatTimer.Stop()
-	rf.heartBeatTimer.Reset(heartBeatTimeout)
-}
+//func (rf *Raft) resetElectionTimer() {
+//	rf.electionTimer.Stop()
+//	rf.electionTimer.Reset(rf.getRandomDuration())
+//}
+//
+//func (rf *Raft) resetHeartBeatTimer() {
+//	rf.heartBeatTimer.Stop()
+//	rf.heartBeatTimer.Reset(heartBeatTimeout)
+//}
 
 
 // get some log index or terms

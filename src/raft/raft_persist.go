@@ -58,9 +58,12 @@ func (rf *Raft) readPersist(data []byte) {
 	var voteFor int
 
 	if d.Decode(&currentTerm) != nil || d.Decode(&voteFor)!=nil || d.Decode(&logs)!=nil{
-		Log().Error.Printf("read state decoding error!!")
+		//Log().Error.Printf("read state decoding error!!")
+		return
 	}
+	rf.lock()
 	rf.currentTerm = currentTerm
 	rf.voteFor = voteFor
 	rf.logs = logs
+	rf.unlock()
 }

@@ -42,17 +42,16 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 
 	rf.lock()
 	defer rf.unlock()
+	defer rf.sendCh(rf.heartbeatCh)
 	defer rf.persist()
-	Log().Debug.Printf("server %d recv append entries from leader server %d",rf.me,args.LeaderId)
 
-	if args.Term == rf.currentTerm{
-		rf.resetElectionTimer()
-	}
+	//Log().Debug.Printf("server %d recv append entries from leader server %d",rf.me,args.LeaderId)
+
+
 
 	if args.Term > rf.currentTerm{
-		Log().Info.Printf("args.Term %d > rf.currentTerm %d",args.Term,rf.currentTerm)
-		rf.currentTerm = args.Term
-		rf.changeRole(Follower)
+		//Log().Info.Printf("args.Term %d > rf.currentTerm %d",args.Term,rf.currentTerm)
+		rf.changeToFollower(args.Term)
 	}
 
 	reply.Term = rf.currentTerm
@@ -61,11 +60,10 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	reply.ConflictTerm = -1
 
 	if args.Term < rf.currentTerm{
-		Log().Warning.Printf("args.Term %d < rf.currentTerm %d",args.Term,rf.currentTerm)
+		//Log().Warning.Printf("args.Term %d < rf.currentTerm %d",args.Term,rf.currentTerm)
 		return
 	}
 
-	//defer rf.resetElectionTimer()
 
 	//Reply false if log doesn’t contain an entry at prevLogIndex
 	//whose term matches prevLogTerm (§5.3)
@@ -74,7 +72,7 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 
 	//如果一个follower在日志中没有prevLogIndex，它应该返回conflictIndex=len(log)和conflictTerm = None。
 	if rf.getLastLogIndex() < args.PrevLogIndex {
-		Log().Warning.Printf("missing log")
+		//Log().Warning.Printf("missing log")
 		reply.ConflictIndex = rf.getLastLogIndex() + 1
 		reply.ConflictTerm = -1
 		return
@@ -84,7 +82,7 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	//它应该返回conflictTerm = log[prevLogIndex].Term，
 	//并且查询它的日志以找到第一个term等于conflictTerm的条目的index。
 	if rf.getTerm(args.PrevLogIndex) != args.PrevLogTerm{
-		Log().Warning.Printf("entry at prevLogIndex whose term does not matches prevLogTerm")
+		//Log().Warning.Printf("entry at prevLogIndex whose term does not matches prevLogTerm")
 
 		//contain logs that leader doesn't have
 		reply.ConflictTerm = rf.getTerm(args.PrevLogIndex)
@@ -126,7 +124,7 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	//min(leaderCommit, index of last new entry)
 
 	if rf.commitIndex < args.LeaderCommitIdx{
-		Log().Debug.Printf("follower commit, rf.commit:%d, arg.leadercommit:%d",rf.commitIndex,args.LeaderCommitIdx)
+		//Log().Debug.Printf("follower commit, rf.commit:%d, arg.leadercommit:%d",rf.commitIndex,args.LeaderCommitIdx)
 		rf.commitIndex = Min(args.LeaderCommitIdx,rf.getLastLogIndex())
 		//rf.startApply <- 1
 		rf.updateLastApplied()
@@ -142,7 +140,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 //lock before using
 func (rf *Raft) broadCast() {
-	Log().Info.Printf("server %d start broadcast heartbeats, rf.nextidx:%d, rf.matchidx:%d",rf.me,rf.nextIndex,rf.matchIndex)
+	//Log().Info.Printf("server %d start broadcast heartbeats, rf.nextidx:%d, rf.matchidx:%d",rf.me,rf.nextIndex,rf.matchIndex)
 
 	for i:=range rf.peers {
 		if i == rf.me {
@@ -157,7 +155,8 @@ func (rf *Raft) sendAppendEntriesRPC(peerIdx int) {
 
 	rf.lock()
 
-	if rf.role != Leader{
+	if rf.role != Leader {
+		rf.unlock()
 		return
 	}
 
@@ -171,13 +170,13 @@ func (rf *Raft) sendAppendEntriesRPC(peerIdx int) {
 		Entries:         nil,
 		LeaderCommitIdx: rf.commitIndex,
 	}
-	args.Entries = make([]LogEntry,len(rf.logs[prevLogIndex+1:]))
-	copy(args.Entries,rf.logs[prevLogIndex+1:])
+	args.Entries = make([]LogEntry, len(rf.logs[prevLogIndex+1:]))
+	copy(args.Entries, rf.logs[prevLogIndex+1:])
 	rf.unlock()
 	//Log().Debug.Printf("prevLogIdx:%d, argLogLen:%d",prevLogIndex,len(args.Entries))
 
-	ok := rf.sendAppendEntries(peerIdx,&args,&reply)
-	if ok{
+	ok := rf.sendAppendEntries(peerIdx, &args, &reply)
+	if ok {
 
 		rf.lock()
 		defer rf.unlock()
@@ -187,50 +186,48 @@ func (rf *Raft) sendAppendEntriesRPC(peerIdx int) {
 		//If the two are different, drop the reply and return.
 		//Only if the two terms are the same should you continue processing the reply.
 
-		if rf.role != Leader || rf.currentTerm != args.Term{
+		if rf.role != Leader || rf.currentTerm != args.Term {
 			return
 		}
 
 		//If RPC request or response contains term T > currentTerm:
 		//set currentTerm = T, convert to follower (§5.1)
-		if reply.Term > args.Term{
-			rf.currentTerm = reply.Term
-			rf.changeRole(Follower)
-			rf.persist()
+		if reply.Term > args.Term {
+			rf.changeToFollower(reply.Term)
 			return
 		}
 
-		if reply.Success{
+		if reply.Success {
 			//If successful: update nextIndex and matchIndex for
 			//follower (§5.3)
 			rf.matchIndex[peerIdx] = args.PrevLogIndex + len(args.Entries)
 			rf.nextIndex[peerIdx] = rf.matchIndex[peerIdx] + 1
 			rf.updateCommitIdx()
-		}else {
+			return
+		} else {
 
-				//If AppendEntries fails because of log inconsistency:
-				//decrement nextIndex and retry (§5.3)
+			//If AppendEntries fails because of log inconsistency:
+			//decrement nextIndex and retry (§5.3)
 
-				//一旦收到一个冲突的响应，leader应该首先查询其日志以找到conflictTerm。
-				//如果它发现日志中的一个具有该term的条目，它应该设置nextIndex为日志中该term内的最后一个条目的索引后面的一个。
-				foundConflictTerm := false
-				if reply.ConflictTerm != -1{
-					for i:= args.PrevLogIndex ; i >= 1; i--{
-						if rf.getTerm(i) == reply.ConflictTerm{
-							rf.nextIndex[peerIdx] = i+1
-							foundConflictTerm = true
-							break
-						}
+			//一旦收到一个冲突的响应，leader应该首先查询其日志以找到conflictTerm。
+			//如果它发现日志中的一个具有该term的条目，它应该设置nextIndex为日志中该term内的最后一个条目的索引后面的一个。
+			foundConflictTerm := false
+			if reply.ConflictTerm != -1 {
+				for i := args.PrevLogIndex; i >= 1; i-- {
+					if rf.getTerm(i) == reply.ConflictTerm {
+						rf.nextIndex[peerIdx] = i + 1
+						foundConflictTerm = true
+						break
 					}
 				}
-				//如果它没有找到该term内的一个条目，它应该设置nextIndex=conflictIndex。
+			}
+			//如果它没有找到该term内的一个条目，它应该设置nextIndex=conflictIndex。
 
-				if !foundConflictTerm{
-					rf.nextIndex[peerIdx] = reply.ConflictIndex
-				}
+			if !foundConflictTerm {
+				rf.nextIndex[peerIdx] = reply.ConflictIndex
+			}
 		}
 	}
-
 }
 
 //lock before calling
@@ -247,7 +244,7 @@ func (rf *Raft) updateCommitIdx() {
 
 	if N > rf.commitIndex && rf.logs[N].Term == rf.currentTerm{
 		rf.commitIndex = N
-		Log().Debug.Printf("server %d commit index update to %d",rf.me,tmp[n])
+		//Log().Debug.Printf("server %d commit index update to %d",rf.me,tmp[n])
 		//rf.startApply <- 1
 		rf.updateLastApplied()
 
@@ -256,19 +253,16 @@ func (rf *Raft) updateCommitIdx() {
 
 //lock before calling
 func (rf *Raft) updateLastApplied() {
-
-	go func() {
-		for rf.lastApplied < rf.commitIndex {
-			rf.lastApplied++
-			curLog := rf.logs[rf.lastApplied]
-			applyMsg := ApplyMsg{
-				true,
-				curLog.Cmd,
-				rf.lastApplied,
-			}
-			rf.applyCh <- applyMsg
+	for rf.lastApplied < rf.commitIndex {
+		rf.lastApplied++
+		curLog := rf.logs[rf.lastApplied]
+		applyMsg := ApplyMsg{
+			true,
+			curLog.Cmd,
+			rf.lastApplied,
 		}
-	}()
+		rf.applyCh <- applyMsg
+	}
 
 }
 

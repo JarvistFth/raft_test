@@ -74,20 +74,18 @@ type Raft struct {
 	voteFor int
 
 	logs    []LogEntry
+
+	voteCh chan struct{}
+	heartbeatCh chan struct{}
 	applyCh chan ApplyMsg
-	startApply chan int
+	stopCh chan struct{}
+	startApply chan struct{}
 
 	commitIndex int
 	lastApplied int
 
 	nextIndex []int
 	matchIndex []int
-
-	electionTimer *time.Timer
-	heartBeatTimer *time.Timer
-	applyTimer *time.Timer
-
-
 
 
 
@@ -109,7 +107,7 @@ func (rf *Raft) GetState() (int, bool) {
 
 	term = rf.currentTerm
 	isleader = rf.role == Leader
-	Log().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,rf.role.String())
+	//Log().Info.Printf("server %d, term:%d, role:%s",rf.me,rf.currentTerm,rf.role.String())
 	return term, isleader
 }
 
@@ -128,6 +126,7 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+	rf.sendCh(rf.stopCh)
 }
 
 func (rf *Raft) killed() bool {
@@ -193,12 +192,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.matchIndex = make([]int,len(rf.peers))
 
-	rf.electionTimer = time.NewTimer(rf.getRandomDuration())
-	rf.heartBeatTimer = time.NewTimer(heartBeatTimeout)
-	rf.applyTimer = time.NewTimer(applyTimeout)
 
 	rf.applyCh = applyCh
-	rf.startApply = make(chan int)
+	rf.voteCh = make(chan struct{},1)
+	rf.heartbeatCh = make(chan struct{},1)
+	rf.stopCh = make(chan struct{},1)
 
 
 	// Your initialization code here (2A, 2B, 2C).
@@ -206,72 +204,54 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-	go func(rf *Raft) {
-		for{
+	go func() {
+		for {
 			select {
-			case <- rf.electionTimer.C:
-				rf.lock()
-				role := rf.role
-				switch role {
-				case Follower:
-					rf.changeRole(Candidate)
-					rf.unlock()
-				case Candidate:
-					rf.startElection()
+			case <-rf.stopCh:
+				return
+			default:
+			}
+			rf.lock()
+			role := rf.role
+			rf.unlock()
+			var thisEleTimeout = rf.getRandomDuration()
+			switch role {
+			case Follower, Candidate:
+				select {
+				case <-rf.voteCh:
+					//Log().Info.Printf("recv vote reset, server %d:%s",rf.me,rf.role.String())
+					//thisEleTimeout = rf.getRandomDuration()
+				case <- rf.heartbeatCh:
+					//Log().Info.Printf("recv heartbeat reset, server %d:%s",rf.me,rf.role.String())
+					//thisEleTimeout = rf.getRandomDuration()
+				case <-time.After(thisEleTimeout):
+					rf.lock()
+					//Log().Info.Printf("ele timeout: server %d:%s",rf.me,rf.role.String())
+					rf.changeToCandidate()
 					rf.unlock()
 				}
-
-			case <- rf.heartBeatTimer.C:
-				rf.lock()
-				role := rf.role
-				rf.unlock()
-				if role == Leader{
-					rf.resetHeartBeatTimer()
-					rf.broadCast()
-				}
+			case Leader:
+				rf.broadCast()
+				time.Sleep(heartBeatTimeout)
 			}
 		}
-	}(rf)
+	}()
 
 	//go func(rf *Raft) {
-	//	for  {
+	//	for {
 	//		select {
-	//		case <- rf.heartBeatTimer.C:
+	//		case <-rf.stopCh:
+	//			return
+	//		default:
+	//		}
+	//		select {
+	//		case <- time.After(heartBeatTimeout):
 	//			rf.lock()
 	//			role := rf.role
+	//			rf.unlock()
 	//			if role == Leader{
-	//				rf.resetHeartBeatTimer()
 	//				rf.broadCast()
 	//			}
-	//			rf.unlock()
-	//		}
-	//	}
-	//}(rf)
-
-	//go func(rf *Raft) {
-	//	for !rf.killed(){
-	//		select {
-	//		//case <- rf.applyTimer.C:
-	//			case <- rf.startApply:
-	//			rf.lock()
-	//			var applyMsgs []ApplyMsg
-	//			if rf.lastApplied < rf.commitIndex{
-	//				Log().Info.Printf("server %d, apply index:%d",rf.me,rf.lastApplied)
-	//				for rf.lastApplied< rf.commitIndex{
-	//					rf.lastApplied++
-	//					applyMsg := ApplyMsg{
-	//						CommandValid: true,
-	//						Command:      rf.logs[rf.lastApplied].Cmd,
-	//						CommandIndex: rf.lastApplied,
-	//					}
-	//					applyMsgs = append(applyMsgs,applyMsg)
-	//				}
-	//			}
-	//			rf.unlock()
-	//			for _, msg := range applyMsgs{
-	//				applyCh <- msg
-	//			}
-	//			//rf.applyTimer.Reset(applyTimeout)
 	//		}
 	//	}
 	//}(rf)
@@ -280,37 +260,3 @@ func Make(peers []*labrpc.ClientEnd, me int,
 }
 
 //need lock before using
-func (rf *Raft) changeRole(role Role) {
-	rf.role = role
-	switch role {
-	case Follower:
-		Log().Info.Printf("server %d change to follower at term %d",rf.me,rf.currentTerm)
-		rf.heartBeatTimer.Stop()
-		//每次changeToFollower后都要重启选举定时器，被这个坑了好久TAT..
-		rf.resetElectionTimer()
-		//reset vote for
-		rf.voteFor = -1
-	case Candidate:
-		Log().Info.Printf("server %d change to Candidate at term %d",rf.me,rf.currentTerm)
-		//change to candidate, just start election
-		rf.startElection()
-	case Leader:
-		Log().Info.Printf("server %d change to Leader at term %d",rf.me,rf.currentTerm)
-		//change to leader, stop electionTimer
-		rf.electionTimer.Stop()
-
-		//reset next index to my local last log index + 1
-		for i := range rf.nextIndex{
-			rf.nextIndex[i] = len(rf.logs)
-		}
-
-		//match index should reset to 0
-		for i:= range rf.matchIndex{
-			rf.matchIndex[i] = 0
-		}
-		//reset heartbeat,
-		rf.resetHeartBeatTimer()
-		//start broadcast
-		rf.broadCast()
-	}
-}
