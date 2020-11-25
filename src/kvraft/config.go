@@ -11,7 +11,7 @@ import "math/rand"
 import "encoding/base64"
 import "sync"
 import "runtime"
-import "../raft"
+import "raft"
 import "fmt"
 import "time"
 import "sync/atomic"
@@ -54,7 +54,7 @@ type config struct {
 	maxraftstate int
 	start        time.Time // time at which make_config() was called
 	// begin()/end() statistics
-	t0    time.Time // time at which test_test.go called cfg.begin()
+	t0    time.Time // time at which kv3A_test.go called cfg.begin()
 	rpcs0 int       // rpcTotal() at start of test
 	ops   int32     // number of clerk get/put/append method calls
 }

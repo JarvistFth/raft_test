@@ -29,12 +29,4 @@ func Log() *Logger {
 	return L
 }
 //
-//func Min(x int, y int) int {
-//	if x > y {
-//		return y
-//	} else {
-//		return x
-//	}
-//}
-//
 
