@@ -1,4 +1,4 @@
-package raft
+package kvraft
 
 import (
 	"log"
@@ -28,39 +28,13 @@ func Log() *Logger {
 	})
 	return L
 }
+//
+//func Min(x int, y int) int {
+//	if x > y {
+//		return y
+//	} else {
+//		return x
+//	}
+//}
+//
 
-func Min(x int, y int) int {
-	if x > y {
-		return y
-	} else {
-		return x
-	}
-}
-
-func (role Role) String() string {
-	switch role {
-	case Follower:
-		return "Follower"
-	case Candidate:
-		return "Candidate"
-	case Leader:
-		return "Leader"
-	default:
-		return "unknown role"
-	}
-}
-
-// Debugging
-const Debug = 1
-
-func DPrintf(format string, a ...interface{}) {
-	if Debug > 0 {
-		//_,file,line,ok := runtime.Caller(1)
-		//if(!ok){
-		//
-		//}
-		log.Printf(format, a...)
-
-	}
-	return
-}

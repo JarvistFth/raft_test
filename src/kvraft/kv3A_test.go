@@ -1,7 +1,7 @@
 package kvraft
 
-import "../porcupine"
-import "../models"
+import "porcupine"
+import "models"
 import "testing"
 import "strconv"
 import "time"
@@ -214,7 +214,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 					// log.Printf("%d: client new get %v\n", cli, key)
 					v := Get(cfg, myck, key)
 					if v != last {
-						log.Fatalf("get wrong value, key %v, wanted:\n%v\n, got\n%v\n", key, last, v)
+						log.Fatalf("get wrong value, key %v, wanted:%v, got%v", key, last, v)
 					}
 				}
 			}
