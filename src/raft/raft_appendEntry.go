@@ -71,53 +71,51 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	//shorter log, conflict idx = len(rf.logs)
 
 	//如果一个follower在日志中没有prevLogIndex，它应该返回conflictIndex=len(log)和conflictTerm = None。
-	if rf.getLastLogIndex() < args.PrevLogIndex {
-		//Log().Warning.Printf("missing log")
-		reply.ConflictIndex = rf.getLastLogIndex() + 1
-		reply.ConflictTerm = -1
-		return
+	prevLogTerm := -1
+	if args.PrevLogIndex >= rf.lastIncludeIndex && args.PrevLogIndex <= rf.getLastLogIndex() {
+		prevLogTerm = rf.getTerm(args.PrevLogIndex)
 	}
 
-	//如果一个follower在日志中有prevLogIndex，但是term不匹配，
-	//它应该返回conflictTerm = log[prevLogIndex].Term，
-	//并且查询它的日志以找到第一个term等于conflictTerm的条目的index。
-	if rf.getTerm(args.PrevLogIndex) != args.PrevLogTerm{
-		//Log().Warning.Printf("entry at prevLogIndex whose term does not matches prevLogTerm")
+	logLength := rf.getLogsLength()
 
-		//contain logs that leader doesn't have
-		reply.ConflictTerm = rf.getTerm(args.PrevLogIndex)
-		conflictidx := args.PrevLogIndex
 
-		for rf.getTerm(conflictidx - 1) == reply.ConflictTerm{
-			conflictidx --
+	if prevLogTerm != args.PrevLogTerm{
+		reply.ConflictIndex = logLength
+		//如果一个follower在日志中没有prevLogIndex，它应该返回conflictIndex=len(log)和conflictTerm = None。
+		if prevLogTerm == -1{
+			return
+		}else{
+			//如果一个follower在日志中有prevLogIndex，但是term不匹配，
+			//它应该返回conflictTerm = log[prevLogIndex].Term，
+			//并且查询它的日志以找到第一个term等于conflictTerm的条目的index。
+			reply.ConflictTerm = prevLogTerm
+			for i:= rf.lastIncludeIndex; i<logLength; i++{
+				if rf.getTerm(i) == prevLogTerm{
+					reply.ConflictIndex = i
+					break
+				}
+			}
+			return
 		}
-		reply.ConflictIndex = conflictidx
-		return
 	}
 
-	//If an existing entry conflicts with a new one (same index
-	//but different terms), delete the existing entry and all that
-	//follow it (§5.3) Figure 7 (f)
 	//now has the same previdx and logs[previdx].term, but its term may be different
-
-
 	//Append any new entries not already in the log
-
-	oldLeaderUnCommitedIdx := -1
-	//Log().Info.Printf(args.String())
-
-	for i,e:=range args.Entries{
-		//i start from 0
-		//append new || same index but different term
-		if rf.getLastLogIndex() < args.PrevLogIndex+1+i || e.Term != rf.logs[(args.PrevLogIndex+i+1)].Term {
-			oldLeaderUnCommitedIdx = i
-			break
+	idx := args.PrevLogIndex
+	for i,e := range args.Entries{
+		idx++
+		if idx < logLength{
+			if rf.getLog(idx).Term == e.Term{
+				continue
+			}else{
+				//If an existing entry conflicts with a new one (same index
+				//but different terms), delete the existing entry and all that
+				//follow it (§5.3) Figure 7 (f)
+				rf.logs = rf.logs[:idx - rf.lastIncludeIndex]
+			}
 		}
-	}
-
-	if oldLeaderUnCommitedIdx != -1{
-		rf.logs = rf.logs[:args.PrevLogIndex + oldLeaderUnCommitedIdx+1]
-		rf.logs = append(rf.logs,args.Entries[oldLeaderUnCommitedIdx:]...)
+		rf.logs = append(rf.logs,args.Entries[i:]...)
+		break
 	}
 
 	//If leaderCommit > commitIndex, set commitIndex =
@@ -159,21 +157,28 @@ func (rf *Raft) sendAppendEntriesRPC(peerIdx int) {
 		rf.unlock()
 		return
 	}
+	//Log().Debug.Printf("nextIndex[%d]:%d, lastIncludeIdx:%d",peerIdx,rf.nextIndex[peerIdx],rf.lastIncludeIndex)
+	//如果要发送给follower的日志已经被压缩了，就直接发送快照
+	if rf.nextIndex[peerIdx] - rf.lastIncludeIndex < 1{
+		//Log().Debug.Printf("send install snapshot to %d",peerIdx)
+		rf.unlock()
+		rf.InstallSnapshot(peerIdx)
+		return
+	}
 
-	prevLogIndex := rf.nextIndex[peerIdx] - 1
-
+	prevLogIndex := rf.getPrevLogIndex(peerIdx)
+	//Log().Debug.Printf("append log prevLogIdx:%d, lastIncludeIdx:%d",prevLogIndex, rf.lastIncludeIndex)
 	args := AppendEntriesArgs{
 		Term:            rf.currentTerm,
 		LeaderId:        rf.me,
 		PrevLogIndex:    prevLogIndex,
-		PrevLogTerm:     rf.getTerm(prevLogIndex),
-		Entries:         nil,
+		PrevLogTerm:     rf.getPrevLogTerm(peerIdx),
+		Entries:         append(make([]LogEntry, 0), rf.logs[rf.nextIndex[peerIdx]-rf.lastIncludeIndex:]...),
 		LeaderCommitIdx: rf.commitIndex,
 	}
-	args.Entries = make([]LogEntry, len(rf.logs[prevLogIndex+1:]))
-	copy(args.Entries, rf.logs[prevLogIndex+1:])
 	rf.unlock()
 	//Log().Debug.Printf("prevLogIdx:%d, argLogLen:%d",prevLogIndex,len(args.Entries))
+	//Log().Debug.Printf("send hb to %d",peerIdx)
 
 	ok := rf.sendAppendEntries(peerIdx, &args, &reply)
 	if ok {
@@ -224,7 +229,8 @@ func (rf *Raft) sendAppendEntriesRPC(peerIdx int) {
 			//如果它没有找到该term内的一个条目，它应该设置nextIndex=conflictIndex。
 
 			if !foundConflictTerm {
-				rf.nextIndex[peerIdx] = reply.ConflictIndex
+				//leader may take snapshot, and follower reply.conflict index may less than logs length
+				rf.nextIndex[peerIdx] = Min(reply.ConflictIndex,rf.getLogsLength())
 			}
 		}
 	}
@@ -242,7 +248,7 @@ func (rf *Raft) updateCommitIdx() {
 	n := (len(rf.peers) - 1) / 2
 	N := tmp[n]
 
-	if N > rf.commitIndex && rf.logs[N].Term == rf.currentTerm{
+	if N > rf.commitIndex && rf.getTerm(N) == rf.currentTerm{
 		rf.commitIndex = N
 		//Log().Debug.Printf("server %d commit index update to %d",rf.me,tmp[n])
 		//rf.startApply <- 1
@@ -253,13 +259,19 @@ func (rf *Raft) updateCommitIdx() {
 
 //lock before calling
 func (rf *Raft) updateLastApplied() {
+
+	rf.lastApplied = Max(rf.lastIncludeIndex,rf.lastApplied)
+	rf.commitIndex = Max(rf.lastIncludeIndex,rf.commitIndex)
+
 	for rf.lastApplied < rf.commitIndex {
 		rf.lastApplied++
-		curLog := rf.logs[rf.lastApplied]
+		Log().Debug.Printf("lastApplied:%d, lastIncludeIdx:%d",rf.lastApplied,rf.lastIncludeIndex)
+		curLog := rf.getLog(rf.lastApplied)
 		applyMsg := ApplyMsg{
 			true,
 			curLog.Cmd,
 			rf.lastApplied,
+			nil,
 		}
 		rf.applyCh <- applyMsg
 	}

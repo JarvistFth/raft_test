@@ -20,13 +20,13 @@ func (rf *Raft) persist() {
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
 
-	b := new(bytes.Buffer)
-	e := labgob.NewEncoder(b)
-	_ = e.Encode(rf.currentTerm)
-	_ = e.Encode(rf.voteFor)
-	_ = e.Encode(rf.logs)
-	data := b.Bytes()
-	rf.persister.SaveRaftState(data)
+	//b := new(bytes.Buffer)
+	//e := labgob.NewEncoder(b)
+	//_ = e.Encode(rf.currentTerm)
+	//_ = e.Encode(rf.voteFor)
+	//_ = e.Encode(rf.logs)
+	//data := b.Bytes()
+	rf.persister.SaveRaftState(rf.encodeRaftState())
 }
 
 //
@@ -56,8 +56,11 @@ func (rf *Raft) readPersist(data []byte) {
 	var logs []LogEntry
 	var currentTerm int
 	var voteFor int
+	var lastIncludeIndex int
+	var lastIncludeTerm int
 
-	if d.Decode(&currentTerm) != nil || d.Decode(&voteFor)!=nil || d.Decode(&logs)!=nil{
+	if d.Decode(&currentTerm) != nil || d.Decode(&voteFor)!=nil || d.Decode(&logs)!=nil ||
+		d.Decode(&lastIncludeIndex)!=nil || d.Decode(&lastIncludeTerm) != nil{
 		//Log().Error.Printf("read state decoding error!!")
 		return
 	}
@@ -65,5 +68,11 @@ func (rf *Raft) readPersist(data []byte) {
 	rf.currentTerm = currentTerm
 	rf.voteFor = voteFor
 	rf.logs = logs
+	rf.lastIncludeIndex = lastIncludeIndex
+	rf.lastIncludeTerm = lastIncludeTerm
+	rf.lastApplied = lastIncludeIndex
+	rf.commitIndex = lastIncludeIndex
 	rf.unlock()
 }
+
+

@@ -50,6 +50,7 @@ type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
 	CommandIndex int
+	SnapShot	[]byte
 }
 
 type LogEntry struct {
@@ -87,6 +88,8 @@ type Raft struct {
 	nextIndex []int
 	matchIndex []int
 
+	lastIncludeIndex int
+	lastIncludeTerm int
 
 
 	// Your data here (2A, 2B, 2C).
@@ -147,15 +150,17 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	term = rf.currentTerm
 	isLeader = rf.role == Leader
 	if isLeader{
+		//这里的index也要更新为包括includeIndex的下标
+		index = rf.getLastLogIndex() + 1
 		rf.logs = append(rf.logs,LogEntry{
 			Term:  rf.currentTerm,
 			Cmd:   command,
 		})
-		index = len(rf.logs) - 1
 		rf.nextIndex[rf.me] = index + 1
 		rf.matchIndex[rf.me] = index
 		rf.persist()
 		//Log().Info.Printf("get cmd from client, logslength:%d",len(rf.logs))
+		rf.broadCast()
 	}
 	return index, term, isLeader
 }
@@ -188,9 +193,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 
 	rf.nextIndex = make([]int,len(rf.peers))
-
-
 	rf.matchIndex = make([]int,len(rf.peers))
+
 
 
 	rf.applyCh = applyCh

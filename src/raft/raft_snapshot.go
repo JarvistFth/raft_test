@@ -20,7 +20,7 @@ func (rf *Raft) TakeSnapshot(index int, snapshot []byte)  {
 	if index <= rf.lastIncludeIndex{
 		return
 	}
-	Log().Debug.Printf("SaveStateAndSnapshot, lastIncludeIndex:%d",rf.lastIncludeIndex)
+	//Log().Debug.Printf("SaveStateAndSnapshot, lastIncludeIndex:%d",rf.lastIncludeIndex)
 
 	rf.logs = append(make([]LogEntry,0),rf.logs[index - rf.lastIncludeIndex:]...)
 	rf.lastIncludeIndex = index
@@ -36,7 +36,7 @@ func (rf *Raft) SendInstallSnapshotRPC(server int, args *InstallSnapshotArgs, re
 func (rf *Raft) RequestInstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.lock()
 	defer rf.unlock()
-	Log().Debug.Printf("follower %d snapshot",rf.me)
+	//Log().Debug.Printf("follower %d snapshot",rf.me)
 	reply.Term = rf.currentTerm
 
 	if args.Term < rf.currentTerm{
@@ -74,8 +74,8 @@ func (rf *Raft) RequestInstallSnapshot(args *InstallSnapshotArgs, reply *Install
 	//saveStateWithSnapshot
 	rf.persister.SaveStateAndSnapshot(rf.encodeRaftState(),args.Data)
 
-	rf.lastApplied = args.LastIncludeIndex
-	rf.commitIndex = args.LastIncludeIndex
+	rf.lastApplied = Max(rf.lastApplied,rf.lastIncludeIndex)
+	rf.commitIndex = Max(rf.commitIndex,rf.lastIncludeIndex)
 
 	if rf.lastApplied > rf.lastIncludeIndex{
 		return
