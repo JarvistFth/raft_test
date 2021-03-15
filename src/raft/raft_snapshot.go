@@ -60,6 +60,8 @@ func (rf *Raft) RequestInstallSnapshot(args *InstallSnapshotArgs, reply *Install
 			Cmd:  nil,
 		}}
 	}else{
+		//discard log before args.lastIncludeIndex,
+		//notice that now may has been snapshot for some times, so index should be relative with rf.lastIncludeIndex
 		rf.logs	= append(make([]LogEntry,0),rf.logs[args.LastIncludeIndex - rf.lastIncludeIndex:]...)
 	}
 
@@ -68,9 +70,6 @@ func (rf *Raft) RequestInstallSnapshot(args *InstallSnapshotArgs, reply *Install
 	rf.lastIncludeTerm = args.LastIncludeTerm
 
 	//update commit idx & last applied idx
-
-
-
 	//saveStateWithSnapshot
 	rf.persister.SaveStateAndSnapshot(rf.encodeRaftState(),args.Data)
 

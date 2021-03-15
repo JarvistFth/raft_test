@@ -265,7 +265,7 @@ func (rf *Raft) updateLastApplied() {
 
 	for rf.lastApplied < rf.commitIndex {
 		rf.lastApplied++
-		Log().Debug.Printf("lastApplied:%d, lastIncludeIdx:%d",rf.lastApplied,rf.lastIncludeIndex)
+		//Log().Debug.Printf("lastApplied:%d, lastIncludeIdx:%d",rf.lastApplied,rf.lastIncludeIndex)
 		curLog := rf.getLog(rf.lastApplied)
 		applyMsg := ApplyMsg{
 			true,

@@ -41,7 +41,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	op := Op{
 		OpType: GetCmd,
 		Key:    args.Key,
-		//Value: strconv.FormatInt(nrand(),10),
 		Value: "",
 		ClientId: args.ClientID,
 		RequestId: args.RequestID,
@@ -80,7 +79,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 			return
 		}
 	}else{
-		reply.Msg = WrongLeader
+		reply.Msg = Timeout
 		return
 	}
 
@@ -121,7 +120,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Msg = OK
 		return
 	}else{
-		reply.Msg = WrongLeader
+		reply.Msg = Timeout
 		return
 	}
 }
@@ -257,7 +256,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 					continue
 				}
 				op := msg.Command.(Op)
-				Log().Debug.Printf("get msg from apply ch, idx: %d, value:%s", msg.CommandIndex,op.Value)
+				//Log().Debug.Printf("get msg from apply ch, idx: %d, value:%s", msg.CommandIndex,op.Value)
 				clientid := op.ClientId
 
 				kv.mu.Lock()
@@ -289,6 +288,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 		}
 	}()
-	Log().Info.Printf("server start")
+	//Log().Info.Printf("server start")
 	return kv
 }

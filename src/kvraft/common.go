@@ -4,6 +4,7 @@ const (
 	OK          = "OK"
 	ErrNoKey    = "ErrNoKey"
 	WrongLeader = "WrongLeader"
+	Timeout = "Timeout"
 )
 
 type Msg string

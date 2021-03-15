@@ -59,7 +59,7 @@ func (ck *Clerk) Get(key string) string {
 	for{
 		//Log().Info.Printf("client %d , send get rpc to server %d",ck.ClientId,i)
 		ok := ck.servers[i].Call("KVServer.Get",&args,&reply)
-		if ok && reply.Msg != WrongLeader{
+		if ok && reply.Msg == OK{
 				ck.lastServer = i
 				return reply.Value
 
@@ -97,7 +97,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	for{
 		//Log().Info.Printf("client %d , send put rpc to server %d",ck.ClientId,i)
 		ok := ck.servers[i].Call("KVServer.PutAppend",&args,&reply)
-		if ok && reply.Msg != WrongLeader{
+		if ok && reply.Msg == OK{
 			ck.lastServer = i
 			return
 		}

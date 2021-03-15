@@ -1,8 +1,11 @@
 package shardkv
 
-import "shardmaster"
-import "labrpc"
-import "testing"
+import (
+	"lab6.824/labrpc"
+	"lab6.824/raft"
+	"lab6.824/shardmaster"
+	"testing"
+)
 import "os"
 
 // import "log"
@@ -12,7 +15,6 @@ import "math/rand"
 import "encoding/base64"
 import "sync"
 import "runtime"
-import "../raft"
 import "strconv"
 import "fmt"
 import "time"
@@ -107,7 +109,7 @@ func (cfg *config) mastername(i int) string {
 }
 
 // shard server name for labrpc.
-// i'th server of group gid.
+// i'th server of group mygid.
 func (cfg *config) servername(gid int, i int) string {
 	return "server-" + strconv.Itoa(gid) + "-" + strconv.Itoa(i)
 }
@@ -314,6 +316,7 @@ func (cfg *config) joinm(gis []int) {
 		}
 		m[gid] = servernames
 	}
+	log.Warning("joinm",m)
 	cfg.mck.Join(m)
 }
 
